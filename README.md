@@ -15,12 +15,14 @@ cp .env.example .env  # add API keys
 
 ## API Keys
 
-| Key | Required | Source |
-|-----|----------|--------|
-| GOOGLE_API_KEY | Always | [Google AI Studio](https://aistudio.google.com/apikey) |
-| EXA_API_KEY | Always | [Exa](https://exa.ai) |
-| CONGRESS_GOV_API_KEY | Federal scope | [Congress.gov](https://api.congress.gov/sign-up) |
-| OPENSTATES_API_KEY | State scope | [OpenStates](https://openstates.org/accounts/register/) |
+| Key | When Needed | Get It | Cost |
+|-----|-------------|--------|------|
+| GOOGLE_API_KEY | Always | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
+| EXA_API_KEY | Always | [dashboard.exa.ai](https://dashboard.exa.ai/api-keys) | Free tier |
+| CONGRESS_GOV_API_KEY | `--scope federal` or `all` | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
+| OPENSTATES_API_KEY | `--scope state:XX` or `all` | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
+
+Semantic Scholar and Federal Register APIs don't require keys.
 
 ## Usage
 
