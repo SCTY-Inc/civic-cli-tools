@@ -96,24 +96,35 @@ src/
 
 ## Changelog
 
-| Date | Version | Changes |
-|------|---------|---------|
-| 2026-01-25 | 0.4.0 | Compare mode, confidence scoring, source appendix, code refactor |
-| 2026-01-25 | 0.3.0 | 7 tools (added CourtListener, Census), multi-source enforcement |
-| 2026-01-25 | 0.2.0 | Migrated from CrewAI to vanilla Python + Gemini |
-| 2024-10-24 | - | CrewAI cleanup |
-| 2024-08-24 | - | Streamlined CrewAI agents |
-| 2024-04-23 | - | Switched to Groq |
-| 2024-03-27 | - | Groq + Mistral + Streamlit UI |
-| 2024-03-02 | 0.1.0 | Initial release (Poetry + Streamlit + CrewAI) |
+| Date | Change |
+|------|--------|
+| **2026-01-25** | **v0.4** — Compare mode (`--compare CA,NY`), confidence scoring, source appendix, refactored tools/ package |
+| **2026-01-25** | **v0.3** — 7 API tools: Exa, Semantic Scholar, Congress.gov, Federal Register, CourtListener, Census, OpenStates |
+| **2026-01-25** | **v0.2** — Rewrite: CrewAI → vanilla Python + Gemini. Streamlit UI → CLI. 50+ deps → 5 deps |
+| 2024-08-24 | Streamlined CrewAI agents |
+| 2024-04-23 | Switched LLM to Groq |
+| 2024-03-27 | Added Groq + Mistral, Streamlit UI |
+| 2024-02-28 | Pivoted from trip planner to policy brief generator |
+| **2023-12-27** | **v0.1** — Initial commit: CrewAI trip planning demo (Poetry + OpenAI) |
 
-### Migration Notes
+### Project Evolution
 
-**v0.1 → v0.2**: Complete rewrite from CrewAI (50+ deps, 918MB) to vanilla Python (5 deps, ~50MB). Switched from Streamlit UI to CLI-first design.
+```
+Trip Planner (Dec 2023)
+    ↓ pivoted to policy research
+Policy Brief Generator (Feb 2024)
+    ↓ added UI
+Streamlit + CrewAI + Groq (Mar 2024)
+    ↓ simplified
+Vanilla Python CLI + Gemini (Jan 2026)
+    ↓ added multi-source
+7-API Research Tool + Compare Mode (Jan 2026)
+```
 
-**v0.2 → v0.3**: Added 7 government/academic APIs with scope-based filtering (federal/state/all).
-
-**v0.3 → v0.4**: Added `--compare` mode for jurisdiction comparison, confidence scoring, source appendix. Split `tools.py` into package for maintainability.
+**Key metrics:**
+- Dependencies: 50+ → 5
+- Install size: 918MB → ~50MB
+- Data sources: 1 (web) → 7 (gov + academic APIs)
 
 ## License
 
