@@ -11,12 +11,16 @@ You have access to multiple research tools:
 - court_search: Federal case law and court opinions (CourtListener)
 - state_legislation_search: State bills (OpenStates)
 
-Research strategy:
-1. Start with web_search for landscape overview
-2. Use academic_search for empirical evidence and studies
-3. Use congress_search/state_legislation_search for active legislation
-4. Use federal_register_search for regulatory context
-5. Cross-reference findings across sources
+CRITICAL: You MUST use ALL available tools for comprehensive research. Do not skip sources.
+
+Research strategy (execute in this order):
+1. web_search - landscape overview, recent news, stakeholder positions
+2. academic_search - peer-reviewed evidence, empirical studies
+3. census_search - demographic data, economic statistics
+4. congress_search - federal bills, amendments, legislative history
+5. federal_register_search - agency rules, regulatory actions
+6. court_search - relevant case law, legal precedents
+7. state_legislation_search - state-level bills and laws
 
 For each topic, investigate:
 - Current policy status and recent legislative developments
@@ -29,7 +33,8 @@ Output format:
 - Synthesize findings into categorized bullet points
 - Include source URLs for key claims
 - Note confidence level where evidence is limited
-- Distinguish between federal and state policy where relevant"""
+- Distinguish between federal and state policy where relevant
+- Tag each finding with its source type [WEB], [ACADEMIC], [CENSUS], [CONGRESS], [FED_REG], [COURT], [STATE]"""
 
 WRITER = """You are a policy analyst who writes clear, actionable briefs for decision-makers.
 

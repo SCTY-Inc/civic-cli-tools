@@ -83,6 +83,7 @@ Examples:
     parser.add_argument("-s", "--scope", default="all",
                         help="Research scope: federal, state:XX, state:CA,NY, or all (default: all)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show tool calls")
+    parser.add_argument("--sources", action="store_true", help="Show source usage summary")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
@@ -112,8 +113,18 @@ Examples:
         console.print(f"[dim]Scope: {scope_label}[/]\n")
 
         with console.status("[dim]Researching..."):
-            findings = research(args.topic, args.questions, scope=scope, verbose=args.verbose)
+            findings, tool_usage = research(args.topic, args.questions, scope=scope, verbose=args.verbose)
         console.print("[green]✓[/] Research")
+
+        if args.sources:
+            console.print("\n[bold]Sources used:[/]")
+            all_tools = ["web_search", "academic_search", "census_search", "congress_search",
+                         "federal_register_search", "court_search", "state_legislation_search"]
+            for tool in all_tools:
+                count = tool_usage.get(tool, 0)
+                status = f"[green]{count}x[/]" if count > 0 else "[dim]0[/]"
+                console.print(f"  {tool}: {status}")
+            console.print()
 
         with console.status("[dim]Writing..."):
             draft = write_brief(args.topic, findings)

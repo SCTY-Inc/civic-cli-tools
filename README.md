@@ -33,15 +33,17 @@ civic "AI regulation" -s federal               # federal only
 civic "Rent control" -s state:CA,NY            # specific states
 civic "Housing" -q "Impact of zoning reform?"  # with questions
 civic "Climate policy" -v                      # verbose
+civic "Healthcare" --sources                   # show source audit
 ```
 
 ## Options
 
 ```
 -s, --scope SCOPE    federal | state:XX | all (default)
--o, --output FILE    default: report.md
+-o, --output FILE    default: outputs/report.md
 -q, --questions Q    research questions
 -v, --verbose        show tool calls
+--sources            show source usage summary
 -V, --version
 ```
 

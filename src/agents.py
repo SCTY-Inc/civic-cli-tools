@@ -36,7 +36,7 @@ def research(
     questions: list[str] | None = None,
     scope: dict | None = None,
     verbose: bool = False
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """Research phase with multiple tools based on scope.
 
     Args:
@@ -46,10 +46,11 @@ def research(
         verbose: Print tool calls as they execute
 
     Returns:
-        Synthesized research findings
+        Tuple of (synthesized research findings, tool usage counts)
     """
     client = _get_client()
     scope = scope or {"type": "all", "states": []}
+    tool_usage: dict[str, int] = {}
 
     # Build context
     context = f"Research this policy topic: {topic}"
@@ -96,7 +97,7 @@ def research(
                 func_calls.append(part.function_call)
 
         if not func_calls:
-            return _extract_text(response)
+            return _extract_text(response), tool_usage
 
         # Execute all tools and collect responses
         function_responses = []
@@ -104,8 +105,11 @@ def research(
             tool_name = func_call.name
             tool_args = dict(func_call.args) if func_call.args else {}
 
+            # Track usage
+            tool_usage[tool_name] = tool_usage.get(tool_name, 0) + 1
+
             if verbose:
-                console.print(f"  [dim]{tool_name}: {tool_args.get('query', '')}[/]")
+                console.print(f"  [dim]{tool_name}: {tool_args.get('query', tool_args.get('topic', ''))}[/]")
 
             result = tool_registry.execute(tool_name, tool_args)
             function_responses.append(
@@ -121,7 +125,7 @@ def research(
         contents.append(response.candidates[0].content)
         contents.append(types.Content(role="user", parts=function_responses))
 
-    return _extract_text(response)
+    return _extract_text(response), tool_usage
 
 
 def write_brief(topic: str, research_findings: str) -> str:

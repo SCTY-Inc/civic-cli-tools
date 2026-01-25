@@ -16,9 +16,13 @@ Tools by scope:
 | state:XX | web, academic, census, state_legislation |
 | all | all 7 |
 
-Handles parallel tool calls from Gemini.
+Behavior:
+- MUST use ALL available tools (enforced via prompt)
+- Handles parallel tool calls from Gemini
+- Tracks tool usage counts (returned for --sources audit)
+- Tags findings by source type
 
-Output: categorized bullets + sources
+Output: categorized bullets + sources + [SOURCE_TYPE] tags
 
 ## 2. Writer
 
