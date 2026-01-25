@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agents import research, write_brief, review, compare_research, write_comparison
+from output import save_report
 
 __version__ = "0.4.0"
 
@@ -195,7 +196,6 @@ Examples:
             console.print("[green]✓[/] Review")
 
         # Save output
-        from output import save_report
         save_report(final, output_path)
         console.print(f"\n[green]Saved:[/] {output_path}")
         return 0

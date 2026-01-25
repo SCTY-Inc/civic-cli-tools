@@ -1,0 +1,96 @@
+"""Data models for research findings."""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+
+
+@dataclass
+class Finding:
+    """Single research finding with metadata."""
+    title: str
+    snippet: str
+    url: str
+    date: str = ""
+    source_type: str = ""
+    citations: int = 0
+
+
+@dataclass
+class ResearchResults:
+    """Aggregated results from all tools."""
+    findings: list[Finding] = field(default_factory=list)
+    tool_usage: dict[str, int] = field(default_factory=dict)
+
+    def add(self, finding: Finding, tool_name: str):
+        self.findings.append(finding)
+        self.tool_usage[tool_name] = self.tool_usage.get(tool_name, 0) + 1
+
+    def confidence_score(self) -> tuple[str, str]:
+        """Calculate confidence based on source diversity and recency."""
+        if not self.findings:
+            return "LOW", "No findings"
+
+        source_types = set(f.source_type for f in self.findings)
+        diversity = min(len(source_types) / 5, 1.0)
+
+        current_year = datetime.now().year
+        recency_scores = []
+        for f in self.findings:
+            if f.date:
+                try:
+                    year = int(f.date[:4])
+                    age = current_year - year
+                    recency_scores.append(max(0, 1 - (age * 0.2)))
+                except (ValueError, IndexError):
+                    pass
+        recency = sum(recency_scores) / len(recency_scores) if recency_scores else 0.5
+
+        cited = [f for f in self.findings if f.citations > 0]
+        citation_score = min(len(cited) / 3, 1.0) if cited else 0.3
+
+        score = (diversity * 0.4) + (recency * 0.3) + (citation_score * 0.3)
+
+        if score >= 0.7:
+            level, dots = "HIGH", "●●●●●"
+        elif score >= 0.4:
+            level, dots = "MEDIUM", "●●●○○"
+        else:
+            level, dots = "LOW", "●○○○○"
+
+        return level, f"{dots} {level} — {len(source_types)} source types, {len(self.findings)} findings"
+
+    def to_text(self) -> str:
+        """Format findings for LLM consumption."""
+        by_source: dict[str, list[Finding]] = {}
+        for f in self.findings:
+            by_source.setdefault(f.source_type, []).append(f)
+
+        parts = []
+        for source, items in by_source.items():
+            parts.append(f"\n## [{source}]\n")
+            for f in items:
+                date_str = f" ({f.date})" if f.date else ""
+                cite_str = f" [{f.citations} citations]" if f.citations else ""
+                parts.append(f"**{f.title}**{date_str}{cite_str}")
+                parts.append(f"{f.snippet[:800]}")
+                parts.append(f"Source: {f.url}\n")
+        return "\n".join(parts)
+
+    def to_appendix(self) -> str:
+        """Format raw findings as appendix."""
+        by_source: dict[str, list[Finding]] = {}
+        for f in self.findings:
+            by_source.setdefault(f.source_type, []).append(f)
+
+        _, confidence_str = self.confidence_score()
+        parts = [f"## Appendix: Source Data\n\n**Research Confidence:** {confidence_str}\n"]
+
+        for source, items in sorted(by_source.items()):
+            parts.append(f"### {source} ({len(items)} results)")
+            for i, f in enumerate(items, 1):
+                date_str = f"[{f.date}] " if f.date else ""
+                cite_str = f" ({f.citations} citations)" if f.citations else ""
+                parts.append(f"{i}. {date_str}**{f.title}**{cite_str}")
+                parts.append(f"   {f.url}")
+            parts.append("")
+        return "\n".join(parts)

@@ -1,18 +1,21 @@
 """Policy research agents using Gemini."""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from google import genai
 from google.genai import types
 from rich.console import Console
 
 from prompts import RESEARCHER, WRITER, REVIEWER, COMPARATOR
-from tools import get_tool_declarations, ToolRegistry, ResearchResults, Finding
+from tools import get_tool_declarations, ToolRegistry, ResearchResults
 
 console = Console()
 
 MODEL = "gemini-3-flash-preview"
+
+# Singleton client
+_client: genai.Client | None = None
 
 
 @dataclass
@@ -24,15 +27,20 @@ class ResearchOutput:
 
 
 def _get_client() -> genai.Client:
-    """Get configured Gemini client."""
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set in environment")
-    return genai.Client(api_key=api_key)
+    """Get or create Gemini client (singleton)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY not set in environment")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 
 def _extract_text(response) -> str:
     """Extract text content from Gemini response."""
+    if not response.candidates:
+        return ""
     parts = []
     for part in response.candidates[0].content.parts:
         if hasattr(part, "text") and part.text:

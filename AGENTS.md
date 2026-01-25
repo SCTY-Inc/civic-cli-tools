@@ -106,3 +106,21 @@ Score = (diversity × 0.4) + (recency × 0.3) + (citations × 0.3)
 - `WRITER` — brief structure
 - `REVIEWER` — quality checks
 - `COMPARATOR` — comparison analysis
+
+## Code Structure
+
+```
+src/
+├── cli.py (215 LOC)      # entry point
+├── agents.py (265 LOC)   # gemini orchestration
+├── prompts.py (131 LOC)  # system prompts
+├── output.py (15 LOC)    # file output
+└── tools/
+    ├── models.py (96 LOC)         # Finding, ResearchResults
+    ├── declarations.py (95 LOC)   # Gemini function specs
+    ├── implementations.py (246 LOC)  # 7 tool classes
+    ├── registry.py (43 LOC)       # ToolRegistry
+    └── base.py (38 LOC)           # BaseTool class
+```
+
+All files < 300 LOC per project guidelines.

@@ -82,11 +82,16 @@ civic "Cannabis" --compare CA,CO,NY            # multi-state
 
 ```
 src/
-├── cli.py       # entry, scope/compare parsing
-├── agents.py    # gemini, tool loop, compare mode
-├── tools.py     # 7 tools + Finding/ResearchResults
-├── prompts.py   # RESEARCHER, WRITER, REVIEWER, COMPARATOR
-└── output.py    # markdown output
+├── cli.py           # entry, scope/compare parsing
+├── agents.py        # gemini, tool loop, compare mode
+├── prompts.py       # RESEARCHER, WRITER, REVIEWER, COMPARATOR
+├── output.py        # markdown output
+└── tools/
+    ├── models.py        # Finding, ResearchResults
+    ├── declarations.py  # Gemini function specs
+    ├── implementations.py  # 7 tool classes
+    ├── registry.py      # ToolRegistry
+    └── base.py          # BaseTool class
 ```
 
 ## License
