@@ -78,7 +78,7 @@ Examples:
         """,
     )
     parser.add_argument("topic", nargs="?", help="Policy topic to research")
-    parser.add_argument("-o", "--output", default="report.md", help="Output file (default: report.md)")
+    parser.add_argument("-o", "--output", default="outputs/report.md", help="Output file (default: outputs/report.md)")
     parser.add_argument("-q", "--questions", nargs="+", metavar="Q", help="Specific research questions")
     parser.add_argument("-s", "--scope", default="all",
                         help="Research scope: federal, state:XX, state:CA,NY, or all (default: all)")
