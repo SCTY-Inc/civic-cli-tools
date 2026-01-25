@@ -1,9 +1,9 @@
 # civic-cli-tools
 
-Policy research CLI. Generates evidence-based briefs from multiple sources.
+Policy research CLI. Generates evidence-based briefs from 7 sources.
 
 ```
-topic → research (5 tools) → write → review → report.md
+topic → research (7 tools) → write → review → report.md
 ```
 
 ## Install
@@ -19,10 +19,11 @@ cp .env.example .env  # add API keys
 |-----|-------------|--------|------|
 | GOOGLE_API_KEY | Always | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
 | EXA_API_KEY | Always | [dashboard.exa.ai](https://dashboard.exa.ai/api-keys) | Free tier |
-| CONGRESS_GOV_API_KEY | `--scope federal` or `all` | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
-| OPENSTATES_API_KEY | `--scope state:XX` or `all` | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
+| CONGRESS_GOV_API_KEY | `--scope federal` | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
+| OPENSTATES_API_KEY | `--scope state:XX` | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
+| CENSUS_API_KEY | Optional | [api.census.gov/data/key_signup](https://api.census.gov/data/key_signup.html) | Free |
 
-Semantic Scholar and Federal Register APIs don't require keys.
+No key needed: Semantic Scholar, Federal Register, CourtListener.
 
 ## Usage
 
@@ -50,8 +51,10 @@ civic "Climate policy" -v                      # verbose
 |------|--------|------|
 | web_search | Exa | news, articles |
 | academic_search | Semantic Scholar | 200M+ papers |
+| census_search | US Census | demographics, income, housing |
 | congress_search | Congress.gov | federal bills |
 | federal_register_search | Federal Register | rules, notices |
+| court_search | CourtListener | federal case law |
 | state_legislation_search | OpenStates | 50 state bills |
 
 ## Structure
@@ -60,7 +63,7 @@ civic "Climate policy" -v                      # verbose
 src/
 ├── cli.py       # entry, scope parsing
 ├── agents.py    # gemini, tool loop
-├── tools.py     # 5 tools + registry
+├── tools.py     # 7 tools + registry
 ├── prompts.py   # system prompts
 └── output.py    # markdown output
 ```

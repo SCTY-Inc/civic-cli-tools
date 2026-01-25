@@ -1,9 +1,9 @@
 # AGENTS.md
 
-Three-phase pipeline, 5 research tools.
+Three-phase pipeline, 7 research tools.
 
 ```
-research (5 tools) → write → review → report.md
+research (7 tools) → write → review → report.md
 ```
 
 ## 1. Researcher
@@ -12,9 +12,9 @@ Tools by scope:
 
 | Scope | Tools |
 |-------|-------|
-| federal | web, academic, congress, federal_register |
-| state:XX | web, academic, state_legislation |
-| all | all 5 |
+| federal | web, academic, census, congress, federal_register, court |
+| state:XX | web, academic, census, state_legislation |
+| all | all 7 |
 
 Handles parallel tool calls from Gemini.
 
@@ -37,13 +37,15 @@ Returns polished version.
 
 ## Tools
 
-| Tool | API | Rate Limit |
-|------|-----|------------|
-| web_search | Exa | — |
-| academic_search | Semantic Scholar | 1 RPS |
-| congress_search | Congress.gov | — |
-| federal_register_search | Federal Register | — |
-| state_legislation_search | OpenStates | — |
+| Tool | API | Key Required |
+|------|-----|--------------|
+| web_search | Exa | Yes |
+| academic_search | Semantic Scholar | No |
+| census_search | US Census | No (optional) |
+| congress_search | Congress.gov | Yes |
+| federal_register_search | Federal Register | No |
+| court_search | CourtListener | No |
+| state_legislation_search | OpenStates | Yes |
 
 ## Prompts
 

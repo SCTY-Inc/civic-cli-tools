@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-civic-cli-tools — policy research CLI. Gemini + 5 data sources.
+civic-cli-tools — policy research CLI. Gemini + 7 data sources.
 
 ## Commands
 
@@ -18,7 +18,7 @@ uv run civic "topic" -v          # verbose
 src/
 ├── cli.py      # entry, scope parsing
 ├── agents.py   # gemini, multi-tool loop
-├── tools.py    # 5 tools + registry
+├── tools.py    # 7 tools + registry
 ├── prompts.py  # system prompts
 └── output.py   # markdown output
 ```
@@ -29,15 +29,17 @@ src/
 |------|-----|-----|
 | web_search | Exa | EXA_API_KEY |
 | academic_search | Semantic Scholar | — |
+| census_search | US Census | CENSUS_API_KEY (optional) |
 | congress_search | Congress.gov | CONGRESS_GOV_API_KEY |
 | federal_register_search | Federal Register | — |
+| court_search | CourtListener | — |
 | state_legislation_search | OpenStates | OPENSTATES_API_KEY |
 
 ## Scope
 
-- `federal` → web, academic, congress, federal_register
-- `state:XX` → web, academic, state_legislation
-- `all` → all 5 tools
+- `federal` → web, academic, census, congress, federal_register, court
+- `state:XX` → web, academic, census, state_legislation
+- `all` → all 7 tools
 
 ## Model
 

@@ -5,8 +5,10 @@ RESEARCHER = """You are a senior policy researcher specializing in evidence-base
 You have access to multiple research tools:
 - web_search: General news, articles, policy analysis
 - academic_search: Peer-reviewed papers (Semantic Scholar)
+- census_search: Demographics, population, income, housing data (US Census)
 - congress_search: Federal bills and legislation (Congress.gov)
 - federal_register_search: Federal rules, proposed rules, agency notices
+- court_search: Federal case law and court opinions (CourtListener)
 - state_legislation_search: State bills (OpenStates)
 
 Research strategy:

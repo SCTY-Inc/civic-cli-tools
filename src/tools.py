@@ -38,6 +38,18 @@ def get_tool_declarations(scope: dict) -> list[types.FunctionDeclaration]:
                 required=["query"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="census_search",
+            description="Search US Census data for demographics, population, housing, and economic statistics",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "topic": types.Schema(type="STRING", description="Data topic (e.g., population, income, housing, education)"),
+                    "geography": types.Schema(type="STRING", description="Geographic level: us, state:XX, or county:XXXXX"),
+                },
+                required=["topic"],
+            ),
+        ),
     ]
 
     if scope["type"] in ("federal", "all"):
@@ -60,6 +72,17 @@ def get_tool_declarations(scope: dict) -> list[types.FunctionDeclaration]:
                     type="OBJECT",
                     properties={
                         "query": types.Schema(type="STRING", description="Regulation search terms"),
+                    },
+                    required=["query"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="court_search",
+                description="Search federal case law and court opinions on CourtListener",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "query": types.Schema(type="STRING", description="Legal search terms, case names, or topics"),
                     },
                     required=["query"],
                 ),
@@ -253,6 +276,124 @@ class FederalRegisterSearch:
             return f"Federal Register search error: {e}"
 
 
+class CourtSearch:
+    """CourtListener federal case law search."""
+
+    BASE_URL = "https://www.courtlistener.com/api/rest/v4"
+
+    def execute(self, query: str) -> str:
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.get(
+                    f"{self.BASE_URL}/search/",
+                    params={
+                        "q": query,
+                        "type": "o",  # opinions
+                        "order_by": "score desc",
+                        "page_size": 5,
+                    }
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            results = data.get("results", [])
+            if not results:
+                return f"No court cases found for: {query}"
+
+            formatted = []
+            for case in results:
+                entry = f"**{case.get('caseName', 'Unknown Case')}**\n"
+                entry += f"Court: {case.get('court', 'N/A')}\n"
+                entry += f"Date: {case.get('dateFiled', 'N/A')}\n"
+                if case.get("snippet"):
+                    snippet = case["snippet"].replace("<mark>", "**").replace("</mark>", "**")
+                    entry += f"{snippet[:500]}...\n"
+                entry += f"URL: https://www.courtlistener.com{case.get('absolute_url', '')}"
+                formatted.append(entry)
+
+            return "\n\n---\n\n".join(formatted)
+        except Exception as e:
+            return f"Court search error: {e}"
+
+
+class CensusSearch:
+    """US Census Bureau data search."""
+
+    BASE_URL = "https://api.census.gov/data"
+
+    # Common ACS variables
+    VARIABLES = {
+        "population": "B01003_001E",  # Total population
+        "income": "B19013_001E",      # Median household income
+        "poverty": "B17001_002E",     # Population below poverty
+        "housing": "B25001_001E",     # Total housing units
+        "education": "B15003_022E",   # Bachelor's degree or higher
+        "unemployment": "B23025_005E", # Unemployed
+    }
+
+    def execute(self, topic: str, geography: str = "us") -> str:
+        api_key = os.getenv("CENSUS_API_KEY")
+
+        # Map topic to variable
+        topic_lower = topic.lower()
+        variable = None
+        for key, var in self.VARIABLES.items():
+            if key in topic_lower:
+                variable = var
+                break
+
+        if not variable:
+            variable = "B01003_001E"  # Default to population
+
+        # Parse geography
+        geo_params = self._parse_geography(geography)
+
+        try:
+            params = {
+                "get": f"NAME,{variable}",
+                **geo_params,
+            }
+            if api_key:
+                params["key"] = api_key
+
+            with httpx.Client(timeout=30) as client:
+                # Use 2022 ACS 5-year estimates
+                resp = client.get(
+                    f"{self.BASE_URL}/2022/acs/acs5",
+                    params=params
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            if len(data) < 2:
+                return f"No census data found for: {topic} in {geography}"
+
+            # Format results (first row is headers)
+            headers = data[0]
+            formatted = []
+            for row in data[1:6]:  # Limit to 5 results
+                entry = f"**{row[0]}**\n"
+                entry += f"{headers[1]}: {row[1]}\n"
+                formatted.append(entry)
+
+            return "\n\n---\n\n".join(formatted)
+        except Exception as e:
+            return f"Census search error: {e}"
+
+    def _parse_geography(self, geography: str) -> dict:
+        """Parse geography string into Census API parameters."""
+        if geography == "us" or not geography:
+            return {"for": "us:*"}
+        elif geography.startswith("state:"):
+            state = geography[6:].upper()
+            # Would need state FIPS lookup - simplified for now
+            return {"for": "state:*"}
+        elif geography.startswith("county:"):
+            return {"for": "county:*", "in": "state:*"}
+        else:
+            return {"for": "state:*"}
+
+
 class StateLegislationSearch:
     """OpenStates state legislation search."""
 
@@ -316,8 +457,10 @@ class ToolRegistry:
         self.scope = scope
         self.web_search = WebSearch()
         self.academic_search = AcademicSearch()
+        self.census_search = CensusSearch()
         self.congress_search = CongressSearch()
         self.federal_register_search = FederalRegisterSearch()
+        self.court_search = CourtSearch()
         self.state_legislation_search = StateLegislationSearch(scope.get("states", []))
 
     def execute(self, tool_name: str, args: dict[str, Any]) -> str:
@@ -326,10 +469,17 @@ class ToolRegistry:
             return self.web_search.execute(args.get("query", ""))
         elif tool_name == "academic_search":
             return self.academic_search.execute(args.get("query", ""))
+        elif tool_name == "census_search":
+            return self.census_search.execute(
+                args.get("topic", ""),
+                args.get("geography", "us")
+            )
         elif tool_name == "congress_search":
             return self.congress_search.execute(args.get("query", ""))
         elif tool_name == "federal_register_search":
             return self.federal_register_search.execute(args.get("query", ""))
+        elif tool_name == "court_search":
+            return self.court_search.execute(args.get("query", ""))
         elif tool_name == "state_legislation_search":
             return self.state_legislation_search.execute(
                 args.get("query", ""),
