@@ -1,16 +1,45 @@
-.venv
+# Environment
 .env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# uv
+uv.lock
+
+# Output
+*.md
+!README.md
+!CLAUDE.md
+!AGENTS.md
+!agents.md
+report/
+output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archive
+_archive/
+archive/
+
+# Misc
 .local/
 *workspace
-Modelfile
-__pycache__
-.DS_Store
-output/*
-archive/
-_Archive/
-tryagain/
-report/
 db/
 test/
-*.pyc
-.cursorrules
