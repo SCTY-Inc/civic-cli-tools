@@ -94,6 +94,27 @@ src/
     └── base.py          # BaseTool class
 ```
 
+## Changelog
+
+| Date | Version | Changes |
+|------|---------|---------|
+| 2026-01-25 | 0.4.0 | Compare mode, confidence scoring, source appendix, code refactor |
+| 2026-01-25 | 0.3.0 | 7 tools (added CourtListener, Census), multi-source enforcement |
+| 2026-01-25 | 0.2.0 | Migrated from CrewAI to vanilla Python + Gemini |
+| 2024-10-24 | - | CrewAI cleanup |
+| 2024-08-24 | - | Streamlined CrewAI agents |
+| 2024-04-23 | - | Switched to Groq |
+| 2024-03-27 | - | Groq + Mistral + Streamlit UI |
+| 2024-03-02 | 0.1.0 | Initial release (Poetry + Streamlit + CrewAI) |
+
+### Migration Notes
+
+**v0.1 → v0.2**: Complete rewrite from CrewAI (50+ deps, 918MB) to vanilla Python (5 deps, ~50MB). Switched from Streamlit UI to CLI-first design.
+
+**v0.2 → v0.3**: Added 7 government/academic APIs with scope-based filtering (federal/state/all).
+
+**v0.3 → v0.4**: Added `--compare` mode for jurisdiction comparison, confidence scoring, source appendix. Split `tools.py` into package for maintainability.
+
 ## License
 
 MIT
