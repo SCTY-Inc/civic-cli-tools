@@ -7,11 +7,11 @@ from google.genai import types
 from rich.console import Console
 
 from prompts import RESEARCHER, WRITER, REVIEWER
-from tools import web_search, get_search_declaration
+from tools import get_tool_declarations, ToolRegistry
 
 console = Console()
 
-MODEL = "gemini-2.5-flash-preview-05-20"
+MODEL = "gemini-3-flash-preview"
 
 
 def _get_client() -> genai.Client:
@@ -31,28 +31,49 @@ def _extract_text(response) -> str:
     return "".join(parts)
 
 
-def research(topic: str, questions: list[str] | None = None, verbose: bool = False) -> str:
-    """Research phase with web search tool.
+def research(
+    topic: str,
+    questions: list[str] | None = None,
+    scope: dict | None = None,
+    verbose: bool = False
+) -> str:
+    """Research phase with multiple tools based on scope.
 
     Args:
         topic: Policy topic to research
         questions: Optional specific research questions
-        verbose: Print search queries as they execute
+        scope: Research scope dict with 'type' and 'states' keys
+        verbose: Print tool calls as they execute
 
     Returns:
         Synthesized research findings
     """
     client = _get_client()
+    scope = scope or {"type": "all", "states": []}
 
+    # Build context
     context = f"Research this policy topic: {topic}"
     if questions:
-        context += f"\n\nSpecific questions to address:\n"
+        context += "\n\nSpecific questions to address:\n"
         context += "\n".join(f"- {q}" for q in questions)
 
-    contents = [types.Content(role="user", parts=[types.Part(text=context)])]
-    tools = [types.Tool(function_declarations=[get_search_declaration()])]
+    # Add scope context
+    if scope["type"] == "federal":
+        context += "\n\nFocus on FEDERAL policy only (Congress, federal agencies)."
+    elif scope["type"] == "state":
+        states = ", ".join(scope["states"])
+        context += f"\n\nFocus on STATE policy only for: {states}"
+    else:
+        context += "\n\nSearch BOTH federal and state policy sources."
 
-    max_iterations = 10
+    # Initialize tools
+    tool_declarations = get_tool_declarations(scope)
+    tool_registry = ToolRegistry(scope)
+
+    contents = [types.Content(role="user", parts=[types.Part(text=context)])]
+    tools = [types.Tool(function_declarations=tool_declarations)]
+
+    max_iterations = 15
     iteration = 0
 
     while iteration < max_iterations:
@@ -68,38 +89,37 @@ def research(topic: str, questions: list[str] | None = None, verbose: bool = Fal
             ),
         )
 
-        # Check for function calls
-        func_call = None
+        # Collect all function calls
+        func_calls = []
         for part in response.candidates[0].content.parts:
             if hasattr(part, "function_call") and part.function_call:
-                func_call = part.function_call
-                break
+                func_calls.append(part.function_call)
 
-        if not func_call:
+        if not func_calls:
             return _extract_text(response)
 
-        # Execute search
-        query = func_call.args.get("query", "")
-        if verbose:
-            console.print(f"  [dim]Searching: {query}[/]")
+        # Execute all tools and collect responses
+        function_responses = []
+        for func_call in func_calls:
+            tool_name = func_call.name
+            tool_args = dict(func_call.args) if func_call.args else {}
 
-        result = web_search.execute(query)
+            if verbose:
+                console.print(f"  [dim]{tool_name}: {tool_args.get('query', '')}[/]")
 
-        # Add assistant response and tool result to conversation
-        contents.append(response.candidates[0].content)
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part(
-                        function_response=types.FunctionResponse(
-                            name=func_call.name,
-                            response={"result": result},
-                        )
+            result = tool_registry.execute(tool_name, tool_args)
+            function_responses.append(
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name=func_call.name,
+                        response={"result": result},
                     )
-                ],
+                )
             )
-        )
+
+        # Add assistant response and all tool results
+        contents.append(response.candidates[0].content)
+        contents.append(types.Content(role="user", parts=function_responses))
 
     return _extract_text(response)
 
