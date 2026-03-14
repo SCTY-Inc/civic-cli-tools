@@ -1,0 +1,12 @@
+{
+  "name": "civic-cli-tools",
+  "path": "/home/deploy/scty-repos/civic-cli-tools",
+  "agents": {
+    "review": "claude",
+    "implement": "codex"
+  },
+  "maxIterations": 25,
+  "priorities": {
+    "sources": ["specs", "backlog"]
+  }
+}

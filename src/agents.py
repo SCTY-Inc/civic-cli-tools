@@ -12,7 +12,7 @@ from tools import get_tool_declarations, ToolRegistry, ResearchResults
 
 console = Console()
 
-MODEL = "gemini-3-flash-preview"
+MODEL = "gemini-2.0-flash"
 
 # Singleton client
 _client: genai.Client | None = None
@@ -54,18 +54,16 @@ def research(
     scope: dict | None = None,
     verbose: bool = False
 ) -> ResearchOutput:
-    """Research phase with multiple tools based on scope."""
+    """Research phase: runs all available tools based on scope."""
     client = _get_client()
     scope = scope or {"type": "all", "states": []}
     results = ResearchResults()
 
-    # Build context
     context = f"Research this policy topic: {topic}"
     if questions:
         context += "\n\nSpecific questions to address:\n"
         context += "\n".join(f"- {q}" for q in questions)
 
-    # Add scope context
     if scope["type"] == "federal":
         context += "\n\nFocus on FEDERAL policy only (Congress, federal agencies)."
         scope_label = "federal"
@@ -77,19 +75,13 @@ def research(
         context += "\n\nSearch BOTH federal and state policy sources."
         scope_label = "federal + state"
 
-    # Initialize tools
     tool_declarations = get_tool_declarations(scope)
     tool_registry = ToolRegistry(scope)
 
     contents = [types.Content(role="user", parts=[types.Part(text=context)])]
     tools = [types.Tool(function_declarations=tool_declarations)]
 
-    max_iterations = 15
-    iteration = 0
-
-    while iteration < max_iterations:
-        iteration += 1
-
+    for _ in range(15):
         response = client.models.generate_content(
             model=MODEL,
             contents=contents,
@@ -100,34 +92,29 @@ def research(
             ),
         )
 
-        # Collect all function calls
-        func_calls = []
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "function_call") and part.function_call:
-                func_calls.append(part.function_call)
+        func_calls = [
+            part.function_call
+            for part in response.candidates[0].content.parts
+            if hasattr(part, "function_call") and part.function_call
+        ]
 
         if not func_calls:
             return ResearchOutput(
                 text=_extract_text(response),
                 results=results,
-                scope_label=scope_label
+                scope_label=scope_label,
             )
 
-        # Execute all tools and collect responses
         function_responses = []
         for func_call in func_calls:
-            tool_name = func_call.name
             tool_args = dict(func_call.args) if func_call.args else {}
-
             if verbose:
                 query = tool_args.get("query", tool_args.get("topic", ""))
-                console.print(f"  [dim]{tool_name}: {query}[/]")
+                console.print(f"  [dim]{func_call.name}: {query}[/]")
 
-            findings, formatted = tool_registry.execute(tool_name, tool_args)
-
-            # Store findings
+            findings, formatted = tool_registry.execute(func_call.name, tool_args)
             for f in findings:
-                results.add(f, tool_name)
+                results.add(f, func_call.name)
 
             function_responses.append(
                 types.Part(
@@ -144,7 +131,7 @@ def research(
     return ResearchOutput(
         text=_extract_text(response),
         results=results,
-        scope_label=scope_label
+        scope_label=scope_label,
     )
 
 
@@ -152,15 +139,9 @@ def write_brief(topic: str, research_output: ResearchOutput, include_appendix: b
     """Write policy brief from research findings."""
     client = _get_client()
 
-    prompt = f"""Write a policy brief on: {topic}
-
-Based on this research:
-
-{research_output.text}"""
-
     response = client.models.generate_content(
         model=MODEL,
-        contents=prompt,
+        contents=f"Write a policy brief on: {topic}\n\nBased on this research:\n\n{research_output.text}",
         config=types.GenerateContentConfig(
             system_instruction=WRITER,
             max_output_tokens=8192,
@@ -168,10 +149,8 @@ Based on this research:
     )
 
     brief = _extract_text(response)
-
     if include_appendix and research_output.results.findings:
         brief += "\n\n---\n\n" + research_output.results.to_appendix()
-
     return brief
 
 
@@ -187,7 +166,6 @@ def review(draft: str) -> str:
             max_output_tokens=8192,
         ),
     )
-
     return _extract_text(response)
 
 
@@ -195,33 +173,20 @@ def compare_research(
     topic: str,
     targets: list[str],
     questions: list[str] | None = None,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> list[ResearchOutput]:
     """Run research for multiple scopes/targets."""
+    scope_map = {
+        "federal": {"type": "federal", "states": []},
+        "news": {"type": "news", "states": []},
+        "policy": {"type": "policy", "states": []},
+    }
     outputs = []
-
     for target in targets:
-        # Parse target into scope
-        if target == "federal":
-            scope = {"type": "federal", "states": []}
-        elif target == "news":
-            # News-only: just web search
-            scope = {"type": "news", "states": []}
-        elif target == "policy":
-            # Policy sources only
-            scope = {"type": "policy", "states": []}
-        elif len(target) == 2 and target.upper() == target:
-            # State code
-            scope = {"type": "state", "states": [target]}
-        else:
-            scope = {"type": "state", "states": [target.upper()]}
-
+        scope = scope_map.get(target) or {"type": "state", "states": [target.upper()]}
         if verbose:
             console.print(f"\n[bold]Researching: {target}[/]")
-
-        output = research(topic, questions, scope, verbose)
-        outputs.append(output)
-
+        outputs.append(research(topic, questions, scope, verbose))
     return outputs
 
 
@@ -229,22 +194,12 @@ def write_comparison(topic: str, outputs: list[ResearchOutput]) -> str:
     """Write comparison brief from multiple research outputs."""
     client = _get_client()
 
-    # Build comparison context
-    sections = []
-    for output in outputs:
-        sections.append(f"## {output.scope_label.upper()}\n\n{output.text}")
-
+    sections = [f"## {o.scope_label.upper()}\n\n{o.text}" for o in outputs]
     combined = "\n\n---\n\n".join(sections)
-
-    prompt = f"""Compare and contrast policy approaches on: {topic}
-
-Research findings by jurisdiction:
-
-{combined}"""
 
     response = client.models.generate_content(
         model=MODEL,
-        contents=prompt,
+        contents=f"Compare policy approaches on: {topic}\n\nResearch by jurisdiction:\n\n{combined}",
         config=types.GenerateContentConfig(
             system_instruction=COMPARATOR,
             max_output_tokens=8192,
@@ -252,14 +207,7 @@ Research findings by jurisdiction:
     )
 
     comparison = _extract_text(response)
-
-    # Add combined appendix
-    all_findings = []
-    for output in outputs:
-        all_findings.extend(output.results.findings)
-
+    all_findings = [f for o in outputs for f in o.results.findings]
     if all_findings:
-        combined_results = ResearchResults(findings=all_findings)
-        comparison += "\n\n---\n\n" + combined_results.to_appendix()
-
+        comparison += "\n\n---\n\n" + ResearchResults(findings=all_findings).to_appendix()
     return comparison

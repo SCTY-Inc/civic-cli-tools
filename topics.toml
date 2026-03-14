@@ -1,0 +1,59 @@
+# civic topics — named presets for repeated research
+# Run with: civic run <name>
+# List with: civic topics
+
+[topics.ai-regulation-federal]
+topic = "AI regulation"
+scope = "federal"
+questions = [
+    "What federal agencies are regulating AI?",
+    "What AI-specific legislation is pending in Congress?",
+    "How does the AI Action Plan affect agency rulemaking?"
+]
+output = "outputs/ai-regulation-federal.md"
+
+[topics.ai-regulation-compare]
+topic = "AI regulation"
+compare = "federal,CA,NY,TX"
+questions = [
+    "How do state approaches differ from federal?",
+    "Which states have enacted AI-specific laws?"
+]
+output = "outputs/ai-regulation-compare.md"
+
+[topics.caregiver-federal]
+topic = "family caregiver policy"
+scope = "federal"
+questions = [
+    "What is the current status of the RAISE Family Caregivers Act?",
+    "What CMS rules affect family caregiver reimbursement?",
+    "What federal programs support unpaid caregivers?"
+]
+output = "outputs/caregiver-federal.md"
+
+[topics.care-economy-states]
+topic = "caregiver support policy"
+compare = "CA,NY,MA,WA"
+questions = [
+    "Which states have paid family leave for caregiving?",
+    "What state programs support elder care and child care?"
+]
+output = "outputs/care-economy-states.md"
+
+[topics.chronic-disease-medicaid]
+topic = "chronic disease management Medicaid policy"
+scope = "federal"
+questions = [
+    "How does Medicaid reimburse chronic disease management?",
+    "What CMS innovations target chronic care coordination?"
+]
+output = "outputs/chronic-disease-medicaid.md"
+
+[topics.elder-care-workforce]
+topic = "elder care workforce shortage"
+scope = "all"
+questions = [
+    "What is the scale of the elder care workforce gap?",
+    "What federal and state policies address care worker shortages?"
+]
+output = "outputs/elder-care-workforce.md"
