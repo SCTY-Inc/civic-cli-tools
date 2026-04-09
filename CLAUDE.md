@@ -13,6 +13,8 @@ uv run civic "topic" -v          # verbose
 uv run civic "topic" -f json     # JSON output (for agents)
 uv run civic run <preset>        # run named preset
 uv run civic topics              # list presets
+uv run civic cache stats         # cache size + entries
+uv run civic cache clear         # purge cached responses
 ```
 
 ## Files

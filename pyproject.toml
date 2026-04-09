@@ -1,7 +1,7 @@
 [project]
 name = "civic-cli-tools"
 version = "0.6.0"
-description = "Policy research CLI — evidence-based briefs from 7 government sources"
+description = "Policy research CLI — evidence-based briefs from 8 government sources"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
