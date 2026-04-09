@@ -14,6 +14,16 @@ class Finding:
     source_type: str = ""
     citations: int = 0
 
+    def to_dict(self) -> dict:
+        return {
+            "title": self.title,
+            "snippet": self.snippet,
+            "url": self.url,
+            "date": self.date,
+            "source_type": self.source_type,
+            "citations": self.citations,
+        }
+
 
 @dataclass
 class ResearchResults:
@@ -58,6 +68,14 @@ class ResearchResults:
             level, dots = "LOW", "●○○○○"
 
         return level, f"{dots} {level} — {len(source_types)} source types, {len(self.findings)} findings"
+
+    def to_dict(self) -> dict:
+        level, detail = self.confidence_score()
+        return {
+            "confidence": {"level": level, "detail": detail},
+            "findings": [f.to_dict() for f in self.findings],
+            "tool_usage": self.tool_usage,
+        }
 
     def to_text(self) -> str:
         """Format findings for LLM consumption."""

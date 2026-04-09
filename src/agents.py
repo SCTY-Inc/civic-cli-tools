@@ -1,6 +1,7 @@
 """Policy research agents using Gemini."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from google import genai
@@ -12,7 +13,8 @@ from tools import get_tool_declarations, ToolRegistry, ResearchResults
 
 console = Console()
 
-MODEL = "gemini-2.0-flash"
+MODEL = os.getenv("CIVIC_MODEL", "gemini-2.0-flash")
+MAX_ITERATIONS = int(os.getenv("CIVIC_MAX_ITERATIONS", "15"))
 
 # Singleton client
 _client: genai.Client | None = None
@@ -81,7 +83,7 @@ def research(
     contents = [types.Content(role="user", parts=[types.Part(text=context)])]
     tools = [types.Tool(function_declarations=tool_declarations)]
 
-    for _ in range(15):
+    for _ in range(MAX_ITERATIONS):
         response = client.models.generate_content(
             model=MODEL,
             contents=contents,
@@ -91,6 +93,9 @@ def research(
                 max_output_tokens=4096,
             ),
         )
+
+        if not response.candidates or not response.candidates[0].content.parts:
+            return ResearchOutput(text="", results=results, scope_label=scope_label)
 
         func_calls = [
             part.function_call
@@ -105,25 +110,29 @@ def research(
                 scope_label=scope_label,
             )
 
-        function_responses = []
-        for func_call in func_calls:
-            tool_args = dict(func_call.args) if func_call.args else {}
+        # Execute tool calls in parallel
+        def _run_tool(fc):
+            tool_args = dict(fc.args) if fc.args else {}
             if verbose:
                 query = tool_args.get("query", tool_args.get("topic", ""))
-                console.print(f"  [dim]{func_call.name}: {query}[/]")
+                console.print(f"  [dim]{fc.name}: {query}[/]")
+            return fc, tool_registry.execute(fc.name, tool_args)
 
-            findings, formatted = tool_registry.execute(func_call.name, tool_args)
-            for f in findings:
-                results.add(f, func_call.name)
-
-            function_responses.append(
-                types.Part(
-                    function_response=types.FunctionResponse(
-                        name=func_call.name,
-                        response={"result": formatted},
+        function_responses = []
+        with ThreadPoolExecutor(max_workers=min(len(func_calls), 8)) as pool:
+            futures = [pool.submit(_run_tool, fc) for fc in func_calls]
+            for future in futures:
+                fc, (findings, formatted) = future.result()
+                for f in findings:
+                    results.add(f, fc.name)
+                function_responses.append(
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name=fc.name,
+                            response={"result": formatted},
+                        )
                     )
                 )
-            )
 
         contents.append(response.candidates[0].content)
         contents.append(types.Content(role="user", parts=function_responses))

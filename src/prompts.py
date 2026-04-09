@@ -9,6 +9,7 @@ You have access to multiple research tools:
 - congress_search: Federal bills and legislation (Congress.gov)
 - federal_register_search: Federal rules, proposed rules, agency notices
 - court_search: Federal case law and court opinions (CourtListener)
+- regulations_search: Public comments, proposed rules, regulatory dockets (Regulations.gov)
 - state_legislation_search: State bills (OpenStates)
 
 CRITICAL: You MUST use ALL available tools for comprehensive research. Do not skip sources.
@@ -20,7 +21,8 @@ Research strategy (execute in this order):
 4. congress_search - federal bills, amendments, legislative history
 5. federal_register_search - agency rules, regulatory actions
 6. court_search - relevant case law, legal precedents
-7. state_legislation_search - state-level bills and laws
+7. regulations_search - public comments, dockets, rulemaking documents
+8. state_legislation_search - state-level bills and laws
 
 For each topic, investigate:
 - Current policy status and recent legislative developments

@@ -2,10 +2,25 @@
 
 import os
 
+import httpx
 from exa_py import Exa
 
 from .base import BaseTool, RESULTS_LIMIT, get_env_key
 from .models import Finding
+
+STATE_FIPS = {
+    "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06",
+    "CO": "08", "CT": "09", "DE": "10", "DC": "11", "FL": "12",
+    "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18",
+    "IA": "19", "KS": "20", "KY": "21", "LA": "22", "ME": "23",
+    "MD": "24", "MA": "25", "MI": "26", "MN": "27", "MS": "28",
+    "MO": "29", "MT": "30", "NE": "31", "NV": "32", "NH": "33",
+    "NJ": "34", "NM": "35", "NY": "36", "NC": "37", "ND": "38",
+    "OH": "39", "OK": "40", "OR": "41", "PA": "42", "PR": "72",
+    "RI": "44", "SC": "45", "SD": "46", "TN": "47", "TX": "48",
+    "UT": "49", "VT": "50", "VA": "51", "WA": "53", "WV": "54",
+    "WI": "55", "WY": "56",
+}
 
 
 class WebSearch(BaseTool):
@@ -26,6 +41,8 @@ class WebSearch(BaseTool):
         return self._client
 
     def execute(self, query: str = "", **kwargs) -> list[Finding]:
+        if not query:
+            return self._error("No query provided")
         try:
             results = self.client.search_and_contents(
                 query, type="auto", use_autoprompt=True,
@@ -40,8 +57,10 @@ class WebSearch(BaseTool):
                     date=date, source_type=self.SOURCE_TYPE,
                 ))
             return findings
+        except ValueError:
+            raise
         except Exception as e:
-            return self._error(str(e))
+            return self._error(f"Web search failed: {e}")
 
 
 class AcademicSearch(BaseTool):
@@ -51,6 +70,8 @@ class AcademicSearch(BaseTool):
     BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
     def execute(self, query: str = "", **kwargs) -> list[Finding]:
+        if not query:
+            return self._error("No query provided")
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/paper/search",
@@ -69,8 +90,10 @@ class AcademicSearch(BaseTool):
                     source_type=self.SOURCE_TYPE, citations=paper.get("citationCount", 0),
                 ))
             return findings
-        except Exception as e:
-            return self._error(str(e))
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"Semantic Scholar API error: {e}")
+        except (KeyError, ValueError) as e:
+            return self._error(f"Failed to parse academic results: {e}")
 
 
 class CongressSearch(BaseTool):
@@ -83,6 +106,8 @@ class CongressSearch(BaseTool):
         api_key = get_env_key("CONGRESS_GOV_API_KEY")
         if not api_key:
             return self._error("CONGRESS_GOV_API_KEY not set")
+        if not query:
+            return self._error("No query provided")
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/bill",
@@ -99,8 +124,10 @@ class CongressSearch(BaseTool):
                     source_type=self.SOURCE_TYPE,
                 ))
             return findings
-        except Exception as e:
-            return self._error(str(e))
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"Congress.gov API error: {e}")
+        except (KeyError, ValueError) as e:
+            return self._error(f"Failed to parse Congress results: {e}")
 
 
 class FederalRegisterSearch(BaseTool):
@@ -110,6 +137,8 @@ class FederalRegisterSearch(BaseTool):
     BASE_URL = "https://www.federalregister.gov/api/v1"
 
     def execute(self, query: str = "", **kwargs) -> list[Finding]:
+        if not query:
+            return self._error("No query provided")
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/documents.json",
@@ -127,8 +156,52 @@ class FederalRegisterSearch(BaseTool):
                     source_type=self.SOURCE_TYPE,
                 ))
             return findings
-        except Exception as e:
-            return self._error(str(e))
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"Federal Register API error: {e}")
+        except (KeyError, ValueError) as e:
+            return self._error(f"Failed to parse Federal Register results: {e}")
+
+
+class RegulationsSearch(BaseTool):
+    """Regulations.gov dockets, comments, and rulemaking documents."""
+
+    SOURCE_TYPE = "REGULATIONS"
+    BASE_URL = "https://api.regulations.gov/v4"
+
+    def execute(self, query: str = "", **kwargs) -> list[Finding]:
+        api_key = get_env_key("REGULATIONS_GOV_API_KEY")
+        if not api_key:
+            return self._error("REGULATIONS_GOV_API_KEY not set")
+        if not query:
+            return self._error("No query provided")
+        try:
+            data = self._fetch_json(
+                f"{self.BASE_URL}/documents",
+                params={
+                    "filter[searchTerm]": query,
+                    "page[size]": RESULTS_LIMIT,
+                    "api_key": api_key,
+                },
+            )
+            findings = []
+            for doc in data.get("data", []):
+                attrs = doc.get("attributes", {})
+                summary = attrs.get("summary", "") or ""
+                snippet = f"Type: {attrs.get('documentType', 'N/A')} | Agency: {attrs.get('agencyId', 'N/A')}"
+                if summary:
+                    snippet += f"\n{summary[:500]}"
+                findings.append(Finding(
+                    title=attrs.get("title", "Untitled"),
+                    snippet=snippet,
+                    url=f"https://www.regulations.gov/document/{doc.get('id', '')}",
+                    date=(attrs.get("postedDate", "") or "")[:10],
+                    source_type=self.SOURCE_TYPE,
+                ))
+            return findings
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"Regulations.gov API error: {e}")
+        except (KeyError, ValueError) as e:
+            return self._error(f"Failed to parse Regulations.gov results: {e}")
 
 
 class CourtSearch(BaseTool):
@@ -138,6 +211,8 @@ class CourtSearch(BaseTool):
     BASE_URL = "https://www.courtlistener.com/api/rest/v4"
 
     def execute(self, query: str = "", **kwargs) -> list[Finding]:
+        if not query:
+            return self._error("No query provided")
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/search/",
@@ -155,8 +230,10 @@ class CourtSearch(BaseTool):
                     date=case.get("dateFiled", ""), source_type=self.SOURCE_TYPE,
                 ))
             return findings
-        except Exception as e:
-            return self._error(str(e))
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"CourtListener API error: {e}")
+        except (KeyError, ValueError) as e:
+            return self._error(f"Failed to parse court results: {e}")
 
 
 class CensusSearch(BaseTool):
@@ -164,20 +241,54 @@ class CensusSearch(BaseTool):
 
     SOURCE_TYPE = "CENSUS"
     BASE_URL = "https://api.census.gov/data"
+
     VARIABLES = {
-        "population": "B01003_001E", "income": "B19013_001E",
-        "poverty": "B17001_002E", "housing": "B25001_001E",
-        "education": "B15003_022E", "unemployment": "B23025_005E",
+        # Demographics
+        "population": "B01003_001E",
+        "median_age": "B01002_001E",
+        # Income & poverty
+        "income": "B19013_001E",
+        "poverty": "B17001_002E",
+        "gini": "B19083_001E",
+        # Housing
+        "housing": "B25001_001E",
+        "median_rent": "B25064_001E",
+        "homeownership": "B25003_002E",
+        "vacancy": "B25002_003E",
+        # Education
+        "education": "B15003_022E",
+        "bachelors": "B15003_022E",
+        "high_school": "B15003_017E",
+        # Employment
+        "unemployment": "B23025_005E",
+        "labor_force": "B23025_002E",
+        # Health insurance
+        "uninsured": "B27010_017E",
+        "insurance": "B27010_002E",
+        # Disability
+        "disability": "B18101_001E",
     }
 
     def execute(self, topic: str = "", geography: str = "us", **kwargs) -> list[Finding]:
         api_key = get_env_key("CENSUS_API_KEY")
         topic_lower = topic.lower()
-        variable = next((v for k, v in self.VARIABLES.items() if k in topic_lower), "B01003_001E")
+
+        # Match relevant variables (multiple if applicable)
+        matched = [(k, v) for k, v in self.VARIABLES.items() if k in topic_lower]
+        if not matched:
+            matched = [
+                ("population", self.VARIABLES["population"]),
+                ("income", self.VARIABLES["income"]),
+                ("poverty", self.VARIABLES["poverty"]),
+            ]
+
+        variables = list(dict(matched[:5]).values())  # deduplicate
+        var_labels = [k for k, _ in matched[:5]]
         geo_params = self._parse_geography(geography)
 
         try:
-            params = {"get": f"NAME,{variable}", **geo_params}
+            var_str = ",".join(["NAME"] + variables)
+            params = {"get": var_str, **geo_params}
             if api_key:
                 params["key"] = api_key
             data = self._fetch_json(f"{self.BASE_URL}/2022/acs/acs5", params=params)
@@ -186,22 +297,39 @@ class CensusSearch(BaseTool):
                 return self._error(f"No census data for {topic}")
 
             findings = []
-            headers = data[0]
             for row in data[1:6]:
+                parts = []
+                for i, label in enumerate(var_labels):
+                    val = row[i + 1] if i + 1 < len(row) else "N/A"
+                    parts.append(f"{label}: {val}")
                 findings.append(Finding(
-                    title=row[0], snippet=f"{headers[1]}: {row[1]}",
-                    url="https://data.census.gov", date="2022", source_type=self.SOURCE_TYPE,
+                    title=row[0],
+                    snippet=" | ".join(parts),
+                    url="https://data.census.gov",
+                    date="2022",
+                    source_type=self.SOURCE_TYPE,
                 ))
             return findings
-        except Exception as e:
-            return self._error(str(e))
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"Census API error: {e}")
+        except (KeyError, ValueError, IndexError) as e:
+            return self._error(f"Failed to parse Census data: {e}")
 
     def _parse_geography(self, geography: str) -> dict:
-        if geography == "us" or not geography:
+        if not geography or geography == "us":
             return {"for": "us:*"}
-        elif geography.startswith("state:"):
+        if geography.startswith("state:"):
+            code = geography[6:].strip().upper()
+            fips = STATE_FIPS.get(code)
+            if fips:
+                return {"for": f"state:{fips}"}
             return {"for": "state:*"}
-        elif geography.startswith("county:"):
+        if geography.startswith("county:"):
+            parts = geography[7:].strip().split(",")
+            if len(parts) == 2:
+                state_fips = STATE_FIPS.get(parts[1].strip().upper())
+                if state_fips:
+                    return {"for": "county:*", "in": f"state:{state_fips}"}
             return {"for": "county:*", "in": "state:*"}
         return {"for": "state:*"}
 
@@ -219,6 +347,8 @@ class StateLegislationSearch(BaseTool):
         api_key = get_env_key("OPENSTATES_API_KEY")
         if not api_key:
             return self._error("OPENSTATES_API_KEY not set")
+        if not query:
+            return self._error("No query provided")
 
         jurisdiction = state.lower() if state else (
             self.default_states[0].lower() if len(self.default_states) == 1 else None
@@ -242,5 +372,7 @@ class StateLegislationSearch(BaseTool):
                     source_type=self.SOURCE_TYPE,
                 ))
             return findings
-        except Exception as e:
-            return self._error(str(e))
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            return self._error(f"OpenStates API error: {e}")
+        except (KeyError, ValueError) as e:
+            return self._error(f"Failed to parse state legislation results: {e}")

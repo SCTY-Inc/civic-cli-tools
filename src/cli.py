@@ -1,6 +1,7 @@
 """CLI entry point for civic policy research."""
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -11,9 +12,9 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agents import research, write_brief, review, compare_research, write_comparison
-from output import save_report
+from output import save_report, format_json
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 console = Console()
 err_console = Console(stderr=True)
@@ -97,8 +98,9 @@ def run_pipeline(
     verbose: bool = False,
     show_sources: bool = False,
     no_appendix: bool = False,
+    output_format: str = "markdown",
 ) -> int:
-    """Run the full research → write → review pipeline. Returns exit code."""
+    """Run the full research pipeline. Returns exit code."""
     try:
         scope = parse_scope(scope_str)
         compare_targets = parse_compare(compare_str) if compare_str else None
@@ -112,16 +114,28 @@ def run_pipeline(
         err_console.print("Add to .env or export. Get free keys: api.congress.gov/sign-up | openstates.org/accounts/register/")
         return 1
 
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    is_json = output_format == "json"
 
     try:
         if compare_targets:
-            console.print(f"[bold]Civic[/] comparing: {topic}")
-            console.print(f"[dim]{' vs '.join(compare_targets)}[/]\n")
+            if not is_json:
+                console.print(f"[bold]Civic[/] comparing: {topic}")
+                console.print(f"[dim]{' vs '.join(compare_targets)}[/]\n")
 
-            with console.status("[dim]Researching..."):
-                outputs = compare_research(topic, compare_targets, questions, verbose)
+            with console.status("[dim]Researching...", disable=is_json):
+                outputs = compare_research(topic, compare_targets, questions, verbose and not is_json)
+
+            if is_json:
+                all_results = {}
+                for o in outputs:
+                    all_results[o.scope_label] = o.results.to_dict()
+                print(json.dumps({
+                    "topic": topic,
+                    "mode": "compare",
+                    "targets": compare_targets,
+                    "results": all_results,
+                }, indent=2))
+                return 0
 
             if show_sources:
                 for o in outputs:
@@ -136,11 +150,19 @@ def run_pipeline(
 
         else:
             scope_label = scope_str if scope_str != "all" else "federal + state"
-            console.print(f"[bold]Civic[/] researching: {topic}")
-            console.print(f"[dim]Scope: {scope_label}[/]\n")
 
-            with console.status("[dim]Researching..."):
-                research_output = research(topic, questions, scope=scope, verbose=verbose)
+            if not is_json:
+                console.print(f"[bold]Civic[/] researching: {topic}")
+                console.print(f"[dim]Scope: {scope_label}[/]\n")
+
+            with console.status("[dim]Researching...", disable=is_json):
+                research_output = research(topic, questions, scope=scope, verbose=verbose and not is_json)
+
+            if is_json:
+                results_dict = research_output.results.to_dict()
+                print(format_json(topic, scope_label, results_dict))
+                return 0
+
             console.print("[green]✓[/] Research")
 
             if show_sources:
@@ -160,6 +182,8 @@ def run_pipeline(
                 final = review(draft)
             console.print("[green]✓[/] Review")
 
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
         save_report(final, out)
         console.print(f"\n[green]Saved:[/] {out}")
         return 0
@@ -193,7 +217,8 @@ def cmd_run(args) -> int:
             err_console.print(f"No topics.toml found at {TOPICS_FILE}")
         return 1
 
-    console.print(f"[dim]Running preset:[/] {args.name}")
+    if not getattr(args, "format", None) == "json":
+        console.print(f"[dim]Running preset:[/] {args.name}")
     return run_pipeline(
         topic=topic_config["topic"],
         scope_str=topic_config.get("scope", "all"),
@@ -203,6 +228,7 @@ def cmd_run(args) -> int:
         verbose=args.verbose,
         show_sources=args.sources,
         no_appendix=args.no_appendix,
+        output_format=getattr(args, "format", "markdown"),
     )
 
 
@@ -232,7 +258,17 @@ def cmd_research(args) -> int:
         verbose=args.verbose,
         show_sources=args.sources,
         no_appendix=args.no_appendix,
+        output_format=args.format,
     )
+
+
+def _add_common_flags(parser):
+    """Add flags shared across subcommands."""
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-f", "--format", choices=["markdown", "json"], default="markdown",
+                        help="Output format: markdown (file) or json (stdout)")
+    parser.add_argument("--sources", action="store_true")
+    parser.add_argument("--no-appendix", action="store_true")
 
 
 def main() -> int:
@@ -241,11 +277,12 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="civic",
-        description="Policy research CLI — evidence-based briefs from 7 government sources",
+        description="Policy research CLI — evidence-based briefs from 8 government sources",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   civic "AI regulation" -s federal
+  civic "AI regulation" -s federal -f json
   civic "Caregiver policy" --compare CA,NY,MA
   civic run caregiver-federal
   civic topics
@@ -258,9 +295,7 @@ Examples:
     # --- civic run <name> ---
     run_parser = subparsers.add_parser("run", help="Run a named topic preset from topics.toml")
     run_parser.add_argument("name", help="Topic preset name (see: civic topics)")
-    run_parser.add_argument("-v", "--verbose", action="store_true")
-    run_parser.add_argument("--sources", action="store_true")
-    run_parser.add_argument("--no-appendix", action="store_true")
+    _add_common_flags(run_parser)
     run_parser.set_defaults(func=cmd_run)
 
     # --- civic topics ---
@@ -275,9 +310,7 @@ Examples:
                         help="Compare targets: CA,NY or federal,CA or policy,news")
     parser.add_argument("-o", "--output", default="outputs/report.md")
     parser.add_argument("-q", "--questions", nargs="+", metavar="Q")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--sources", action="store_true")
-    parser.add_argument("--no-appendix", action="store_true")
+    _add_common_flags(parser)
     parser.set_defaults(func=None)
 
     args = parser.parse_args()

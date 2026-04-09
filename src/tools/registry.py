@@ -5,7 +5,8 @@ from typing import Any
 from .models import Finding
 from .implementations import (
     WebSearch, AcademicSearch, CongressSearch,
-    FederalRegisterSearch, CourtSearch, CensusSearch, StateLegislationSearch,
+    FederalRegisterSearch, RegulationsSearch,
+    CourtSearch, CensusSearch, StateLegislationSearch,
 )
 
 
@@ -20,6 +21,7 @@ class ToolRegistry:
             "census_search": CensusSearch(),
             "congress_search": CongressSearch(),
             "federal_register_search": FederalRegisterSearch(),
+            "regulations_search": RegulationsSearch(),
             "court_search": CourtSearch(),
             "state_legislation_search": StateLegislationSearch(scope.get("states", [])),
         }
@@ -30,10 +32,8 @@ class ToolRegistry:
         if not tool:
             return [], f"Unknown tool: {tool_name}"
 
-        # Execute with appropriate args
         findings = tool.execute(**args)
 
-        # Format for LLM
         formatted = []
         for f in findings:
             date_str = f" ({f.date})" if f.date else ""

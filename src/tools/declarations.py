@@ -32,6 +32,10 @@ TOOL_SPECS = {
         "description": "Search federal case law and court opinions on CourtListener",
         "params": {"query": ("STRING", "Legal search terms, case names, or topics")},
     },
+    "regulations_search": {
+        "description": "Search Regulations.gov for public comments, proposed rules, and regulatory dockets",
+        "params": {"query": ("STRING", "Regulation or docket search terms")},
+    },
     "state_legislation_search": {
         "description": "Search state legislation via OpenStates",
         "params": {
@@ -45,10 +49,10 @@ TOOL_SPECS = {
 # Tool sets by scope
 SCOPE_TOOLS = {
     "news": ["web_search"],
-    "policy": ["congress_search", "federal_register_search", "court_search", "state_legislation_search"],
-    "federal": ["web_search", "academic_search", "census_search", "congress_search", "federal_register_search", "court_search"],
+    "policy": ["congress_search", "federal_register_search", "regulations_search", "court_search", "state_legislation_search"],
+    "federal": ["web_search", "academic_search", "census_search", "congress_search", "federal_register_search", "regulations_search", "court_search"],
     "state": ["web_search", "academic_search", "census_search", "state_legislation_search"],
-    "all": ["web_search", "academic_search", "census_search", "congress_search", "federal_register_search", "court_search", "state_legislation_search"],
+    "all": ["web_search", "academic_search", "census_search", "congress_search", "federal_register_search", "regulations_search", "court_search", "state_legislation_search"],
 }
 
 
