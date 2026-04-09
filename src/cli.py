@@ -232,6 +232,47 @@ def cmd_run(args) -> int:
     )
 
 
+def cmd_cache(args) -> int:
+    """Manage response cache."""
+    import sqlite3
+    from tools.base import CACHE_DIR
+
+    db_path = CACHE_DIR / "cache.db"
+
+    if args.cache_action == "clear":
+        if db_path.exists():
+            db_path.unlink()
+            console.print("[green]Cache cleared[/]")
+        else:
+            console.print("[dim]No cache to clear[/]")
+        return 0
+
+    if args.cache_action == "stats":
+        if not db_path.exists():
+            console.print("[dim]No cache file[/]")
+            return 0
+        try:
+            db = sqlite3.connect(str(db_path))
+            count = db.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
+            oldest = db.execute("SELECT MIN(ts) FROM cache").fetchone()[0]
+            newest = db.execute("SELECT MAX(ts) FROM cache").fetchone()[0]
+            db.close()
+            size_kb = db_path.stat().st_size / 1024
+            from datetime import datetime
+            console.print(f"[bold]Cache stats[/]")
+            console.print(f"  Entries: {count}")
+            console.print(f"  Size: {size_kb:.1f} KB")
+            if oldest:
+                console.print(f"  Oldest: {datetime.fromtimestamp(oldest).isoformat()}")
+                console.print(f"  Newest: {datetime.fromtimestamp(newest).isoformat()}")
+        except sqlite3.Error as e:
+            err_console.print(f"[red]Cache error:[/] {e}")
+            return 1
+        return 0
+
+    return 0
+
+
 def cmd_topics(args) -> int:
     """List available topic presets."""
     topics = load_topics()
@@ -271,9 +312,34 @@ def _add_common_flags(parser):
     parser.add_argument("--no-appendix", action="store_true")
 
 
+def _build_adhoc_parser() -> argparse.ArgumentParser:
+    """Parser for ad-hoc topic research (no subcommands)."""
+    parser = argparse.ArgumentParser(
+        prog="civic",
+        description="Policy research CLI — evidence-based briefs from 8 government sources",
+    )
+    parser.add_argument("topic", help="Policy topic to research")
+    parser.add_argument("-s", "--scope", default="all",
+                        help="federal | state:XX | all (default: all)")
+    parser.add_argument("-c", "--compare", metavar="A,B",
+                        help="Compare targets: CA,NY or federal,CA or policy,news")
+    parser.add_argument("-o", "--output", default="outputs/report.md")
+    parser.add_argument("-q", "--questions", nargs="+", metavar="Q")
+    _add_common_flags(parser)
+    return parser
+
+
 def main() -> int:
     load_dotenv()
     signal.signal(signal.SIGINT, handle_interrupt)
+
+    # Detect ad-hoc topic: first non-flag arg is not a known subcommand
+    known_commands = {"run", "topics", "cache"}
+    first_pos = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
+
+    if first_pos and first_pos not in known_commands:
+        args = _build_adhoc_parser().parse_args()
+        return cmd_research(args)
 
     parser = argparse.ArgumentParser(
         prog="civic",
@@ -286,6 +352,7 @@ Examples:
   civic "Caregiver policy" --compare CA,NY,MA
   civic run caregiver-federal
   civic topics
+  civic cache stats
         """,
     )
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
@@ -302,26 +369,15 @@ Examples:
     topics_parser = subparsers.add_parser("topics", help="List available topic presets")
     topics_parser.set_defaults(func=cmd_topics)
 
-    # --- civic <topic> (ad-hoc, default) ---
-    parser.add_argument("topic", nargs="?", help="Policy topic to research")
-    parser.add_argument("-s", "--scope", default="all",
-                        help="federal | state:XX | all (default: all)")
-    parser.add_argument("-c", "--compare", metavar="A,B",
-                        help="Compare targets: CA,NY or federal,CA or policy,news")
-    parser.add_argument("-o", "--output", default="outputs/report.md")
-    parser.add_argument("-q", "--questions", nargs="+", metavar="Q")
-    _add_common_flags(parser)
-    parser.set_defaults(func=None)
+    # --- civic cache ---
+    cache_parser = subparsers.add_parser("cache", help="Manage response cache")
+    cache_parser.add_argument("cache_action", choices=["stats", "clear"], help="stats | clear")
+    cache_parser.set_defaults(func=cmd_cache)
 
     args = parser.parse_args()
 
-    # Subcommand
     if hasattr(args, "func") and args.func:
         return args.func(args)
-
-    # Ad-hoc topic
-    if args.topic:
-        return cmd_research(args)
 
     parser.print_help()
     return 0

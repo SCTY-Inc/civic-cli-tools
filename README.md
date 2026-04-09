@@ -1,9 +1,10 @@
 # civic-cli-tools
 
-Policy research CLI. Generates evidence-based briefs from 7 government and academic sources.
+Policy research CLI. Generates evidence-based briefs from 8 government and academic sources.
 
 ```
-topic → research (7 APIs) → write → review → report.md
+topic → research (8 APIs) → write → review → report.md
+                                           → stdout (JSON)
 ```
 
 ## Install
@@ -21,6 +22,7 @@ cp .env.example .env  # add API keys
 | EXA_API_KEY | Always | [dashboard.exa.ai](https://dashboard.exa.ai/api-keys) | Free tier |
 | CONGRESS_GOV_API_KEY | `--scope federal` | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
 | OPENSTATES_API_KEY | `--scope state:XX` | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
+| REGULATIONS_GOV_API_KEY | `--scope federal` | [api.data.gov/signup](https://api.data.gov/signup/) | Free |
 | CENSUS_API_KEY | Optional | [api.census.gov/data/key_signup](https://api.census.gov/data/key_signup.html) | Free |
 
 No key needed: Semantic Scholar, Federal Register, CourtListener.
@@ -36,9 +38,26 @@ civic "Climate policy" -v                      # verbose
 civic "Healthcare" --sources                   # show confidence + source audit
 ```
 
-## Compare Mode
+### JSON Output (for agents)
 
-Compare policy across jurisdictions:
+```bash
+civic "AI regulation" -s federal -f json       # structured JSON to stdout
+civic "Caregiver policy" -f json | jq '.findings | length'
+```
+
+JSON schema:
+```json
+{
+  "topic": "...",
+  "scope": "...",
+  "timestamp": "ISO8601",
+  "confidence": { "level": "HIGH", "detail": "..." },
+  "findings": [{ "title", "snippet", "url", "date", "source_type", "citations" }],
+  "tool_usage": { "congress_search": 10, ... }
+}
+```
+
+### Compare Mode
 
 ```bash
 civic "Paid leave" --compare CA,NY             # state vs state
@@ -47,11 +66,20 @@ civic "Immigration" --compare policy,news      # legislation vs media
 civic "Cannabis" --compare CA,CO,NY            # multi-state
 ```
 
+### Topic Presets
+
+```bash
+civic topics                                   # list presets
+civic run caregiver-federal                    # run named preset
+civic run ai-regulation-federal -f json        # preset with JSON output
+```
+
 ## Options
 
 ```
 -s, --scope SCOPE      federal | state:XX | all (default)
 -c, --compare A,B      compare targets: CA,NY or federal,CA or policy,news
+-f, --format FMT       markdown (file) | json (stdout)
 -o, --output FILE      default: outputs/report.md
 -q, --questions Q      research questions
 -v, --verbose          show tool calls
@@ -60,11 +88,19 @@ civic "Cannabis" --compare CA,CO,NY            # multi-state
 -V, --version
 ```
 
+### Cache Management
+
+```bash
+civic cache stats                              # show cache size + entries
+civic cache clear                              # purge all cached responses
+```
+
 ## Output Features
 
 - **Confidence scoring**: HIGH/MEDIUM/LOW based on source diversity, recency, citations
 - **Source appendix**: Raw findings with dates and URLs for verification
 - **Comparison matrix**: Side-by-side analysis for --compare mode
+- **Response caching**: 24h SQLite cache at `~/.cache/civic/` — repeat queries are instant
 
 ## Tools
 
@@ -72,59 +108,56 @@ civic "Cannabis" --compare CA,CO,NY            # multi-state
 |------|--------|------|
 | web_search | Exa | news, articles |
 | academic_search | Semantic Scholar | 200M+ papers |
-| census_search | US Census | demographics, income, housing |
+| census_search | US Census | demographics, income, housing (18 variables) |
 | congress_search | Congress.gov | federal bills |
 | federal_register_search | Federal Register | rules, notices |
+| regulations_search | Regulations.gov | dockets, comments, rulemaking |
 | court_search | CourtListener | federal case law |
 | state_legislation_search | OpenStates | 50 state bills |
+
+## Configuration
+
+| Env Var | Default | Purpose |
+|---------|---------|---------|
+| CIVIC_MODEL | gemini-2.0-flash | Gemini model for all phases |
+| CIVIC_MAX_ITERATIONS | 15 | Max tool calls per research phase |
 
 ## Structure
 
 ```
 src/
-├── cli.py           # entry, scope/compare parsing
-├── agents.py        # gemini, tool loop, compare mode
-├── prompts.py       # RESEARCHER, WRITER, REVIEWER, COMPARATOR
-├── output.py        # markdown output
+├── cli.py               # entry, scope/compare parsing, --format json
+├── agents.py            # gemini orchestration, parallel tool execution
+├── prompts.py           # RESEARCHER, WRITER, REVIEWER, COMPARATOR
+├── output.py            # markdown + JSON output
 └── tools/
     ├── models.py        # Finding, ResearchResults
     ├── declarations.py  # Gemini function specs
-    ├── implementations.py  # 7 tool classes
+    ├── implementations.py  # 8 tool classes
     ├── registry.py      # ToolRegistry
-    └── base.py          # BaseTool class
+    └── base.py          # BaseTool, retry, caching
+tests/
+├── test_cli.py          # scope parsing, env checks
+├── test_models.py       # Finding, ResearchResults, confidence
+└── test_tools.py        # all 8 tools with mocked HTTP
 ```
 
 ## Changelog
 
 | Date | Change |
 |------|--------|
+| **2026-04-09** | **v0.6** — 8th source (Regulations.gov), `--format json`, parallel execution, retry/caching, 18 Census variables, 41 tests |
+| **2026-01-28** | **v0.5** — topics.toml presets, `run`/`topics` subcommands, gemini-2.0-flash |
 | **2026-01-25** | **v0.4** — Compare mode (`--compare CA,NY`), confidence scoring, source appendix, refactored tools/ package |
 | **2026-01-25** | **v0.3** — 7 API tools: Exa, Semantic Scholar, Congress.gov, Federal Register, CourtListener, Census, OpenStates |
 | **2026-01-25** | **v0.2** — Rewrite: CrewAI → vanilla Python + Gemini. Streamlit UI → CLI. 50+ deps → 5 deps |
-| 2024-08-24 | Streamlined CrewAI agents |
-| 2024-04-23 | Switched LLM to Groq |
-| 2024-03-27 | Added Groq + Mistral, Streamlit UI |
-| 2024-02-28 | Pivoted from trip planner to policy brief generator |
-| **2023-12-27** | **v0.1** — Initial commit: CrewAI trip planning demo (Poetry + OpenAI) |
-
-### Project Evolution
-
-```
-Trip Planner (Dec 2023)
-    ↓ pivoted to policy research
-Policy Brief Generator (Feb 2024)
-    ↓ added UI
-Streamlit + CrewAI + Groq (Mar 2024)
-    ↓ simplified
-Vanilla Python CLI + Gemini (Jan 2026)
-    ↓ added multi-source
-7-API Research Tool + Compare Mode (Jan 2026)
-```
+| **2023-12-27** | **v0.1** — Initial commit: CrewAI trip planning demo |
 
 **Key metrics:**
 - Dependencies: 50+ → 5
 - Install size: 918MB → ~50MB
-- Data sources: 1 (web) → 7 (gov + academic APIs)
+- Data sources: 1 (web) → 8 (gov + academic APIs)
+- Tests: 0 → 41
 
 ## License
 

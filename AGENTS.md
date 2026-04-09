@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Four-phase pipeline, 7 research tools, compare mode.
+Four-phase pipeline, 8 research tools, compare mode, JSON output.
 
 ```
-research (7 tools) → write → review → report.md
-         ↓
+research (8 tools, parallel) → write → review → report.md
+         ↓                                     → stdout (JSON)
    [compare mode]
          ↓
 research A → research B → compare → report.md
@@ -16,17 +16,18 @@ Tools by scope:
 
 | Scope | Tools |
 |-------|-------|
-| federal | web, academic, census, congress, federal_register, court |
+| federal | web, academic, census, congress, federal_register, regulations, court |
 | state:XX | web, academic, census, state_legislation |
-| all | all 7 |
+| all | all 8 |
 | news | web only |
-| policy | congress, federal_register, court, state_legislation |
+| policy | congress, federal_register, regulations, court, state_legislation |
 
 Behavior:
 - MUST use ALL available tools (enforced via prompt)
-- Handles parallel tool calls from Gemini
+- Parallel tool execution via ThreadPoolExecutor
 - Returns `ResearchOutput` with findings + metadata
 - Tracks tool usage for --sources audit
+- Max iterations configurable via `CIVIC_MAX_ITERATIONS` (default: 15)
 
 Output: `ResearchOutput(text, results, scope_label)`
 
@@ -63,9 +64,11 @@ class Finding:
     title: str
     snippet: str
     url: str
-    date: str       # YYYY-MM-DD or YYYY
-    source_type: str  # WEB, ACADEMIC, CONGRESS, etc
+    date: str         # YYYY-MM-DD or YYYY
+    source_type: str  # WEB, ACADEMIC, CONGRESS, REGULATIONS, etc
     citations: int    # for academic papers
+
+    def to_dict() -> dict  # for JSON output
 
 @dataclass
 class ResearchResults:
@@ -73,7 +76,8 @@ class ResearchResults:
     tool_usage: dict[str, int]
 
     def confidence_score() -> (level, explanation)
-    def to_text() -> str      # for LLM
+    def to_dict() -> dict   # for JSON output
+    def to_text() -> str    # for LLM
     def to_appendix() -> str  # for output
 ```
 
@@ -96,8 +100,16 @@ Score = (diversity × 0.4) + (recency × 0.3) + (citations × 0.3)
 | census_search | US Census | No (optional) | 5 |
 | congress_search | Congress.gov | Yes | 10 |
 | federal_register_search | Federal Register | No | 10 |
+| regulations_search | Regulations.gov | Yes | 10 |
 | court_search | CourtListener | No | 10 |
 | state_legislation_search | OpenStates | Yes | 10 |
+
+## Infrastructure
+
+- **Retry**: 3 attempts with exponential backoff on timeouts, connection errors, 429/5xx
+- **Cache**: SQLite at `~/.cache/civic/cache.db`, 24h TTL, keyed on URL + params
+- **Parallel execution**: ThreadPoolExecutor, up to 8 concurrent tool calls per iteration
+- **Input validation**: Empty queries return error Findings, don't hit APIs
 
 ## Prompts
 
@@ -107,20 +119,13 @@ Score = (diversity × 0.4) + (recency × 0.3) + (citations × 0.3)
 - `REVIEWER` — quality checks
 - `COMPARATOR` — comparison analysis
 
-## Code Structure
+## Agent Integration
 
-```
-src/
-├── cli.py (215 LOC)      # entry point
-├── agents.py (265 LOC)   # gemini orchestration
-├── prompts.py (131 LOC)  # system prompts
-├── output.py (15 LOC)    # file output
-└── tools/
-    ├── models.py (96 LOC)         # Finding, ResearchResults
-    ├── declarations.py (95 LOC)   # Gemini function specs
-    ├── implementations.py (246 LOC)  # 7 tool classes
-    ├── registry.py (43 LOC)       # ToolRegistry
-    └── base.py (38 LOC)           # BaseTool class
+For programmatic use by other agents:
+
+```bash
+uv run civic "topic" -s federal -f json
 ```
 
-All files < 300 LOC per project guidelines.
+Returns structured JSON to stdout with findings, confidence, tool_usage.
+Exit code 0 on success, 1 on error, 130 on interrupt.
