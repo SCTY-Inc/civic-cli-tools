@@ -83,43 +83,42 @@ def research(
     contents = [types.Content(role="user", parts=[types.Part(text=context)])]
     tools = [types.Tool(function_declarations=tool_declarations)]
 
-    for _ in range(MAX_ITERATIONS):
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=RESEARCHER,
-                tools=tools,
-                max_output_tokens=4096,
-            ),
-        )
+    def _run_tool(fc):
+        tool_args = dict(fc.args) if fc.args else {}
+        if verbose:
+            query = tool_args.get("query", tool_args.get("topic", ""))
+            console.print(f"  [dim]{fc.name}: {query}[/]")
+        return fc, tool_registry.execute(fc.name, tool_args)
 
-        if not response.candidates or not response.candidates[0].content.parts:
-            return ResearchOutput(text="", results=results, scope_label=scope_label)
-
-        func_calls = [
-            part.function_call
-            for part in response.candidates[0].content.parts
-            if hasattr(part, "function_call") and part.function_call
-        ]
-
-        if not func_calls:
-            return ResearchOutput(
-                text=_extract_text(response),
-                results=results,
-                scope_label=scope_label,
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for _ in range(MAX_ITERATIONS):
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=RESEARCHER,
+                    tools=tools,
+                    max_output_tokens=4096,
+                ),
             )
 
-        # Execute tool calls in parallel
-        def _run_tool(fc):
-            tool_args = dict(fc.args) if fc.args else {}
-            if verbose:
-                query = tool_args.get("query", tool_args.get("topic", ""))
-                console.print(f"  [dim]{fc.name}: {query}[/]")
-            return fc, tool_registry.execute(fc.name, tool_args)
+            if not response.candidates or not response.candidates[0].content.parts:
+                return ResearchOutput(text="", results=results, scope_label=scope_label)
 
-        function_responses = []
-        with ThreadPoolExecutor(max_workers=min(len(func_calls), 8)) as pool:
+            func_calls = [
+                part.function_call
+                for part in response.candidates[0].content.parts
+                if hasattr(part, "function_call") and part.function_call
+            ]
+
+            if not func_calls:
+                return ResearchOutput(
+                    text=_extract_text(response),
+                    results=results,
+                    scope_label=scope_label,
+                )
+
+            function_responses = []
             futures = [pool.submit(_run_tool, fc) for fc in func_calls]
             for future in futures:
                 fc, (findings, formatted) = future.result()
@@ -134,8 +133,8 @@ def research(
                     )
                 )
 
-        contents.append(response.candidates[0].content)
-        contents.append(types.Content(role="user", parts=function_responses))
+            contents.append(response.candidates[0].content)
+            contents.append(types.Content(role="user", parts=function_responses))
 
     return ResearchOutput(
         text=_extract_text(response),

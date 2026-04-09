@@ -77,11 +77,15 @@ class ResearchResults:
             "tool_usage": self.tool_usage,
         }
 
-    def to_text(self) -> str:
-        """Format findings for LLM consumption."""
+    def _group_by_source(self) -> dict[str, list[Finding]]:
         by_source: dict[str, list[Finding]] = {}
         for f in self.findings:
             by_source.setdefault(f.source_type, []).append(f)
+        return by_source
+
+    def to_text(self) -> str:
+        """Format findings for LLM consumption."""
+        by_source = self._group_by_source()
 
         parts = []
         for source, items in by_source.items():
@@ -96,10 +100,7 @@ class ResearchResults:
 
     def to_appendix(self) -> str:
         """Format raw findings as appendix."""
-        by_source: dict[str, list[Finding]] = {}
-        for f in self.findings:
-            by_source.setdefault(f.source_type, []).append(f)
-
+        by_source = self._group_by_source()
         _, confidence_str = self.confidence_score()
         parts = [f"## Appendix: Source Data\n\n**Research Confidence:** {confidence_str}\n"]
 

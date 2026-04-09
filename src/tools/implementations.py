@@ -1,7 +1,5 @@
 """Tool implementations for policy research."""
 
-import os
-
 import httpx
 from exa_py import Exa
 

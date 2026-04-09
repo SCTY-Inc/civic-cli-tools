@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import tomllib
@@ -13,6 +14,7 @@ from rich.console import Console
 
 from agents import research, write_brief, review, compare_research, write_comparison
 from output import save_report, format_json
+from tools.base import get_cache_stats, clear_cache
 
 __version__ = "0.6.0"
 
@@ -217,7 +219,7 @@ def cmd_run(args) -> int:
             err_console.print(f"No topics.toml found at {TOPICS_FILE}")
         return 1
 
-    if not getattr(args, "format", None) == "json":
+    if getattr(args, "format", None) != "json":
         console.print(f"[dim]Running preset:[/] {args.name}")
     return run_pipeline(
         topic=topic_config["topic"],
@@ -234,40 +236,24 @@ def cmd_run(args) -> int:
 
 def cmd_cache(args) -> int:
     """Manage response cache."""
-    import sqlite3
-    from tools.base import CACHE_DIR
-
-    db_path = CACHE_DIR / "cache.db"
-
     if args.cache_action == "clear":
-        if db_path.exists():
-            db_path.unlink()
+        if clear_cache():
             console.print("[green]Cache cleared[/]")
         else:
             console.print("[dim]No cache to clear[/]")
         return 0
 
     if args.cache_action == "stats":
-        if not db_path.exists():
+        stats = get_cache_stats()
+        if not stats:
             console.print("[dim]No cache file[/]")
             return 0
-        try:
-            db = sqlite3.connect(str(db_path))
-            count = db.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
-            oldest = db.execute("SELECT MIN(ts) FROM cache").fetchone()[0]
-            newest = db.execute("SELECT MAX(ts) FROM cache").fetchone()[0]
-            db.close()
-            size_kb = db_path.stat().st_size / 1024
-            from datetime import datetime
-            console.print(f"[bold]Cache stats[/]")
-            console.print(f"  Entries: {count}")
-            console.print(f"  Size: {size_kb:.1f} KB")
-            if oldest:
-                console.print(f"  Oldest: {datetime.fromtimestamp(oldest).isoformat()}")
-                console.print(f"  Newest: {datetime.fromtimestamp(newest).isoformat()}")
-        except sqlite3.Error as e:
-            err_console.print(f"[red]Cache error:[/] {e}")
-            return 1
+        console.print("[bold]Cache stats[/]")
+        console.print(f"  Entries: {stats['entries']}")
+        console.print(f"  Size: {stats['size_kb']:.1f} KB")
+        if stats["oldest"]:
+            console.print(f"  Oldest: {datetime.fromtimestamp(stats['oldest']).isoformat()}")
+            console.print(f"  Newest: {datetime.fromtimestamp(stats['newest']).isoformat()}")
         return 0
 
     return 0
