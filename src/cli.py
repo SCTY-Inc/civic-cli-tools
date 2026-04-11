@@ -332,16 +332,25 @@ def cmd_doctor(args) -> int:
     def _env_check(name: str) -> bool:
         return bool(os.getenv(name))
 
+    # Shared column width so optional (manual) and required (doctor_runner)
+    # rows line up identically — matches the `[PASS]/[FAIL]` alignment.
+    width = max(len(f"env {k}") for k in required_keys + optional_keys)
+
     # Advisory scan of optional keys (never fails the run).
     for k in optional_keys:
-        mark = "PASS" if _env_check(k) else "WARN"
-        hint = "" if _env_check(k) else f"  — optional — sign up: {API_KEY_SIGNUP.get(k, '(no URL)')}"
-        print(f"  [{mark}] env {k}{hint}", file=sys.stderr)
+        ok = _env_check(k)
+        mark = "PASS" if ok else "WARN"
+        name = f"env {k}".ljust(width)
+        line = f"  [{mark}] {name}"
+        if not ok:
+            line += f"  — optional — sign up: {API_KEY_SIGNUP.get(k, '(no URL)')}"
+        print(line, file=sys.stderr)
 
-    # Required checks — any failure exits nonzero.
+    # Required checks — any failure exits nonzero. Pad names to the shared
+    # width so doctor_runner's own ljust keeps the columns aligned.
     required_checks = [
         DoctorCheck(
-            name=f"env {k}",
+            name=f"env {k}".ljust(width),
             check=(lambda n=k: _env_check(n)),
             hint=f"required — sign up: {API_KEY_SIGNUP.get(k, '(no URL)')}",
         )
