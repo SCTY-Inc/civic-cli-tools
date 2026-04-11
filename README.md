@@ -36,6 +36,24 @@ civic "Rent control" -s state:CA,NY            # specific states
 civic "Housing" -q "Impact of zoning reform?"  # with questions
 civic "Climate policy" -v                      # verbose
 civic "Healthcare" --sources                   # show confidence + source audit
+civic "AI regulation" --limit 10               # cap per-tool results (default 25)
+echo "Paid leave" | civic -                    # read topic from stdin
+```
+
+### Environment Check
+
+```bash
+civic doctor                                   # validate required + optional API keys
+```
+
+Required: `GOOGLE_API_KEY`, `EXA_API_KEY` (fail the run if missing).
+Optional (advisory only): `CONGRESS_GOV_API_KEY`, `OPENSTATES_API_KEY`, `REGULATIONS_GOV_API_KEY`, `CENSUS_API_KEY` — each gates a specific source and prints a signup URL when missing.
+
+### Fetch URL
+
+```bash
+civic get https://example.com/bill.pdf         # raw body to stdout
+civic get https://example.com -f json          # JSON envelope (status, headers, content)
 ```
 
 ### JSON Output (for agents)
@@ -85,8 +103,11 @@ civic run ai-regulation-federal -f json        # preset with JSON output
 -v, --verbose          show tool calls
 --sources              show confidence score + source usage
 --no-appendix          exclude source appendix from output
+--limit N              per-tool results cap (default: 25)
 -V, --version
 ```
+
+Pass `-` as the topic to read it from stdin. Rich output respects `NO_COLOR` and auto-disables when stdout is not a TTY.
 
 ### Cache Management
 
@@ -126,7 +147,8 @@ civic cache clear                              # purge all cached responses
 
 ```
 src/
-├── cli.py               # entry, scope/compare parsing, --format json
+├── cli.py               # entry, scope/compare parsing, --format json, doctor/get
+├── _agent_cli.py        # agent-friendly CLI helpers (DoctorCheck, doctor_runner)
 ├── agents.py            # gemini orchestration, parallel tool execution
 ├── prompts.py           # RESEARCHER, WRITER, REVIEWER, COMPARATOR
 ├── output.py            # markdown + JSON output
@@ -135,7 +157,7 @@ src/
     ├── declarations.py  # Gemini function specs
     ├── implementations.py  # 8 tool classes
     ├── registry.py      # ToolRegistry
-    └── base.py          # BaseTool, retry, caching
+    └── base.py          # BaseTool, retry, caching, set_results_limit (default 25)
 tests/
 ├── test_cli.py          # scope parsing, env checks
 ├── test_models.py       # Finding, ResearchResults, confidence

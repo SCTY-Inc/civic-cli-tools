@@ -11,22 +11,29 @@ uv run civic "topic" -s federal  # federal only
 uv run civic "topic" -s state:CA # state only
 uv run civic "topic" -v          # verbose
 uv run civic "topic" -f json     # JSON output (for agents)
+uv run civic "topic" --limit 10  # per-tool results cap (default 25)
+uv run civic -                   # read topic from stdin
 uv run civic run <preset>        # run named preset
 uv run civic topics              # list presets
+uv run civic doctor              # validate required/optional API keys
+uv run civic get <url>           # fetch URL content (raw | JSON envelope)
 uv run civic cache stats         # cache size + entries
 uv run civic cache clear         # purge cached responses
 ```
+
+Honors `NO_COLOR` and auto-disables Rich formatting when stdout is not a TTY.
 
 ## Files
 
 ```
 src/
-├── cli.py      # entry, scope parsing, --format json
-├── agents.py   # gemini, multi-tool loop, parallel execution
-├── prompts.py  # system prompts
-├── output.py   # markdown + JSON output
+├── cli.py           # entry, scope parsing, --format json, doctor/get subcommands
+├── _agent_cli.py    # agent-friendly CLI helpers (DoctorCheck, doctor_runner)
+├── agents.py        # gemini, multi-tool loop, parallel execution
+├── prompts.py       # system prompts
+├── output.py        # markdown + JSON output
 └── tools/
-    ├── base.py            # BaseTool, retry, caching
+    ├── base.py            # BaseTool, retry, caching, set_results_limit (default 25)
     ├── models.py          # Finding, ResearchResults
     ├── declarations.py    # Gemini function specs
     ├── registry.py        # tool name → execution
