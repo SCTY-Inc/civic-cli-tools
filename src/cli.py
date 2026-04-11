@@ -8,18 +8,33 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 import tomllib
 from dotenv import load_dotenv
 from rich.console import Console
 
+from _agent_cli import DoctorCheck, doctor_runner
 from agents import research, write_brief, review, compare_research, write_comparison
 from output import save_report, format_json
-from tools.base import get_cache_stats, clear_cache
+from tools.base import get_cache_stats, clear_cache, set_results_limit
 
 __version__ = "0.6.0"
 
-console = Console()
-err_console = Console(stderr=True)
+_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stdout.isatty()
+_FORCE_TERM = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+console = Console(no_color=_NO_COLOR, force_terminal=_FORCE_TERM)
+err_console = Console(stderr=True, no_color=_NO_COLOR, force_terminal=_FORCE_TERM)
+
+# API key signup URLs surfaced by `civic doctor`.
+API_KEY_SIGNUP = {
+    "GOOGLE_API_KEY": "https://aistudio.google.com/apikey",
+    "EXA_API_KEY": "https://dashboard.exa.ai/api-keys",
+    "CONGRESS_GOV_API_KEY": "https://api.congress.gov/sign-up",
+    "OPENSTATES_API_KEY": "https://openstates.org/accounts/register/",
+    "REGULATIONS_GOV_API_KEY": "https://open.gsa.gov/api/regulationsgov/",
+    "CENSUS_API_KEY": "https://api.census.gov/data/key_signup.html",
+}
 
 STATES = {
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -101,8 +116,19 @@ def run_pipeline(
     show_sources: bool = False,
     no_appendix: bool = False,
     output_format: str = "markdown",
+    limit: int | None = None,
 ) -> int:
     """Run the full research pipeline. Returns exit code."""
+    if limit:
+        set_results_limit(limit)
+
+    # Read topic from stdin when '-' is passed
+    if topic == "-":
+        topic = sys.stdin.read().strip()
+        if not topic:
+            err_console.print("[red]Error:[/] empty topic on stdin")
+            return 1
+
     try:
         scope = parse_scope(scope_str)
         compare_targets = parse_compare(compare_str) if compare_str else None
@@ -231,6 +257,7 @@ def cmd_run(args) -> int:
         show_sources=args.sources,
         no_appendix=args.no_appendix,
         output_format=getattr(args, "format", "markdown"),
+        limit=getattr(args, "limit", None),
     )
 
 
@@ -286,7 +313,79 @@ def cmd_research(args) -> int:
         show_sources=args.sources,
         no_appendix=args.no_appendix,
         output_format=args.format,
+        limit=getattr(args, "limit", None),
     )
+
+
+def cmd_doctor(args) -> int:
+    """Validate env vars. Required keys fail the run; optional keys warn only."""
+    # Required vs optional split mirrors tools/implementations.py:
+    # GOOGLE_API_KEY + EXA_API_KEY always required; the rest gate specific sources.
+    required_keys = ["GOOGLE_API_KEY", "EXA_API_KEY"]
+    optional_keys = [
+        "CONGRESS_GOV_API_KEY",
+        "OPENSTATES_API_KEY",
+        "REGULATIONS_GOV_API_KEY",
+        "CENSUS_API_KEY",
+    ]
+
+    def _env_check(name: str) -> bool:
+        return bool(os.getenv(name))
+
+    # Advisory scan of optional keys (never fails the run).
+    for k in optional_keys:
+        mark = "PASS" if _env_check(k) else "WARN"
+        hint = "" if _env_check(k) else f"  — optional — sign up: {API_KEY_SIGNUP.get(k, '(no URL)')}"
+        print(f"  [{mark}] env {k}{hint}", file=sys.stderr)
+
+    # Required checks — any failure exits nonzero.
+    required_checks = [
+        DoctorCheck(
+            name=f"env {k}",
+            check=(lambda n=k: _env_check(n)),
+            hint=f"required — sign up: {API_KEY_SIGNUP.get(k, '(no URL)')}",
+        )
+        for k in required_keys
+    ]
+    return doctor_runner(required_checks, exit_on_fail=False)
+
+
+def cmd_get(args) -> int:
+    """Fetch a URL's full content. Markdown by default, JSON envelope with -f json."""
+    url = args.url
+    is_json = getattr(args, "format", "markdown") == "json"
+    try:
+        with httpx.Client(timeout=30, follow_redirects=True) as client:
+            resp = client.get(url, headers={"User-Agent": f"civic/{__version__}"})
+            resp.raise_for_status()
+            body = resp.text
+            status_code = resp.status_code
+            content_type = resp.headers.get("content-type", "")
+    except httpx.HTTPError as e:
+        if is_json:
+            print(json.dumps({
+                "status": "error",
+                "command": "get",
+                "error": str(e),
+            }, separators=(",", ":")))
+        else:
+            err_console.print(f"[red]Error:[/] {e}")
+        return 1
+
+    if is_json:
+        print(json.dumps({
+            "status": "ok",
+            "command": "get",
+            "data": {
+                "url": url,
+                "status_code": status_code,
+                "content_type": content_type,
+                "content": body,
+            },
+        }, separators=(",", ":")))
+    else:
+        print(body)
+    return 0
 
 
 def _add_common_flags(parser):
@@ -296,6 +395,8 @@ def _add_common_flags(parser):
                         help="Output format: markdown (file) or json (stdout)")
     parser.add_argument("--sources", action="store_true")
     parser.add_argument("--no-appendix", action="store_true")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Per-tool results limit (default: 25)")
 
 
 def _build_adhoc_parser() -> argparse.ArgumentParser:
@@ -304,7 +405,7 @@ def _build_adhoc_parser() -> argparse.ArgumentParser:
         prog="civic",
         description="Policy research CLI — evidence-based briefs from 8 government sources",
     )
-    parser.add_argument("topic", help="Policy topic to research")
+    parser.add_argument("topic", help="Policy topic to research (use '-' to read from stdin)")
     parser.add_argument("-s", "--scope", default="all",
                         help="federal | state:XX | all (default: all)")
     parser.add_argument("-c", "--compare", metavar="A,B",
@@ -320,7 +421,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, handle_interrupt)
 
     # Detect ad-hoc topic: first non-flag arg is not a known subcommand
-    known_commands = {"run", "topics", "cache"}
+    known_commands = {"run", "topics", "cache", "doctor", "get"}
     first_pos = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
 
     if first_pos and first_pos not in known_commands:
@@ -359,6 +460,17 @@ Examples:
     cache_parser = subparsers.add_parser("cache", help="Manage response cache")
     cache_parser.add_argument("cache_action", choices=["stats", "clear"], help="stats | clear")
     cache_parser.set_defaults(func=cmd_cache)
+
+    # --- civic doctor ---
+    doctor_parser = subparsers.add_parser("doctor", help="Validate env vars + API keys")
+    doctor_parser.set_defaults(func=cmd_doctor)
+
+    # --- civic get <url> ---
+    get_parser = subparsers.add_parser("get", help="Fetch a URL's full content")
+    get_parser.add_argument("url", help="URL to fetch")
+    get_parser.add_argument("-f", "--format", choices=["markdown", "json"], default="markdown",
+                            help="Output format: markdown (raw body) or json envelope")
+    get_parser.set_defaults(func=cmd_get)
 
     args = parser.parse_args()
 

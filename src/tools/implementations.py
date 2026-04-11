@@ -3,7 +3,8 @@
 import httpx
 from exa_py import Exa
 
-from .base import BaseTool, RESULTS_LIMIT, get_env_key
+from . import base as _base
+from .base import BaseTool, get_env_key
 from .models import Finding
 
 STATE_FIPS = {
@@ -44,7 +45,7 @@ class WebSearch(BaseTool):
         try:
             results = self.client.search_and_contents(
                 query, type="auto", use_autoprompt=True,
-                num_results=RESULTS_LIMIT, text={"max_characters": 1500}, summary=True,
+                num_results=_base.RESULTS_LIMIT, text={"max_characters": 1500}, summary=True,
             )
             findings = []
             for r in results.results:
@@ -73,7 +74,7 @@ class AcademicSearch(BaseTool):
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/paper/search",
-                params={"query": query, "limit": RESULTS_LIMIT,
+                params={"query": query, "limit": _base.RESULTS_LIMIT,
                         "fields": "title,abstract,year,citationCount,url,authors"}
             )
             findings = []
@@ -109,7 +110,7 @@ class CongressSearch(BaseTool):
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/bill",
-                params={"query": query, "limit": RESULTS_LIMIT, "api_key": api_key}
+                params={"query": query, "limit": _base.RESULTS_LIMIT, "api_key": api_key}
             )
             findings = []
             for bill in data.get("bills", []):
@@ -140,7 +141,7 @@ class FederalRegisterSearch(BaseTool):
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/documents.json",
-                params={"conditions[term]": query, "per_page": RESULTS_LIMIT, "order": "relevance"}
+                params={"conditions[term]": query, "per_page": _base.RESULTS_LIMIT, "order": "relevance"}
             )
             findings = []
             for doc in data.get("results", []):
@@ -177,7 +178,7 @@ class RegulationsSearch(BaseTool):
                 f"{self.BASE_URL}/documents",
                 params={
                     "filter[searchTerm]": query,
-                    "page[size]": RESULTS_LIMIT,
+                    "page[size]": _base.RESULTS_LIMIT,
                     "api_key": api_key,
                 },
             )
@@ -214,7 +215,7 @@ class CourtSearch(BaseTool):
         try:
             data = self._fetch_json(
                 f"{self.BASE_URL}/search/",
-                params={"q": query, "type": "o", "order_by": "score desc", "page_size": RESULTS_LIMIT}
+                params={"q": query, "type": "o", "order_by": "score desc", "page_size": _base.RESULTS_LIMIT}
             )
             findings = []
             for case in data.get("results", []):
@@ -353,7 +354,7 @@ class StateLegislationSearch(BaseTool):
         )
 
         try:
-            params = {"q": query, "per_page": RESULTS_LIMIT}
+            params = {"q": query, "per_page": _base.RESULTS_LIMIT}
             if jurisdiction:
                 params["jurisdiction"] = jurisdiction
             data = self._fetch_json(f"{self.BASE_URL}/bills", params=params,

@@ -12,8 +12,15 @@ import httpx
 
 from .models import Finding
 
-RESULTS_LIMIT = 10
+RESULTS_LIMIT = 25  # module-level default; override via set_results_limit()
 TIMEOUT = 30
+
+
+def set_results_limit(n: int) -> None:
+    """Override the per-tool results limit (default 25)."""
+    global RESULTS_LIMIT
+    if n is not None and n > 0:
+        RESULTS_LIMIT = int(n)
 MAX_RETRIES = 3
 CACHE_TTL = 86400  # 24 hours
 CACHE_DIR = Path.home() / ".cache" / "civic"
