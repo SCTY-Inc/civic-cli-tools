@@ -26,7 +26,7 @@ Behavior:
 - MUST use ALL available tools (enforced via prompt)
 - Parallel tool execution via ThreadPoolExecutor
 - Returns `ResearchOutput` with findings + metadata
-- Tracks tool usage for --sources audit
+- Tracks tool calls for --sources audit
 - Max iterations configurable via `CIVIC_MAX_ITERATIONS` (default: 15)
 
 Output: `ResearchOutput(text, results, scope_label)`
@@ -67,18 +67,19 @@ class Finding:
     date: str         # YYYY-MM-DD or YYYY
     source_type: str  # WEB, ACADEMIC, CONGRESS, REGULATIONS, etc
     citations: int    # for academic papers
+    is_error: bool = False
 
     def to_dict() -> dict  # for JSON output
 
 @dataclass
 class ResearchResults:
     findings: list[Finding]
-    tool_usage: dict[str, int]
+    tool_usage: dict[str, int]  # per tool invocation, not per finding
 
     def confidence_score() -> (level, explanation)
     def to_dict() -> dict   # for JSON output
-    def to_text() -> str    # for LLM
-    def to_appendix() -> str  # for output
+    def to_text() -> str    # successful findings for LLM
+    def to_appendix() -> str  # evidence + separate tool errors
 ```
 
 ## Confidence Scoring
@@ -89,13 +90,15 @@ Score = (diversity × 0.4) + (recency × 0.3) + (citations × 0.3)
 ●●●●● HIGH   — 5+ source types, recent, cited
 ●●●○○ MEDIUM — 3-4 sources, some dated
 ●○○○○ LOW    — 1-2 sources, old data
+
+Errors are tracked separately and excluded from confidence/evidence totals.
 ```
 
 ## Tools
 
 Per-tool result cap defaults to `RESULTS_LIMIT = 25` (set in `src/tools/base.py`).
 Override at runtime with `--limit N` on `civic <topic>` or `civic run <preset>`;
-this calls `set_results_limit()` before research kicks off. Census is a fixed 5.
+this calls `set_results_limit()` before research kicks off.
 
 | Tool | API | Key Required | Results |
 |------|-----|--------------|---------|
@@ -135,6 +138,6 @@ echo "topic" | uv run civic - -f json          # read topic from stdin
 uv run civic get <url> -f json                 # fetch arbitrary URL as JSON envelope
 ```
 
-Returns structured JSON to stdout with findings, confidence, tool_usage.
+Returns structured JSON to stdout with findings, confidence, tool_usage, and tool errors when present.
 Exit code 0 on success, 1 on error, 130 on interrupt.
 Rich formatting auto-disables when stdout is not a TTY or when `NO_COLOR` is set.

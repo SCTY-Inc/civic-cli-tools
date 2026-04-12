@@ -1,14 +1,14 @@
 """Output formatting and file handling."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 def save_report(content: str, path: Path) -> None:
     """Save policy brief to markdown file."""
     header = f"""---
-generated: {datetime.now().isoformat()}
+generated: {datetime.now(timezone.utc).isoformat()}
 tool: civic
 ---
 
@@ -21,7 +21,7 @@ def format_json(topic: str, scope: str, results_dict: dict, brief: str = "") -> 
     output = {
         "topic": topic,
         "scope": scope,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         **results_dict,
     }
     if brief:

@@ -2,12 +2,17 @@
 
 from typing import Any
 
-from .models import Finding
 from .implementations import (
-    WebSearch, AcademicSearch, CongressSearch,
-    FederalRegisterSearch, RegulationsSearch,
-    CourtSearch, CensusSearch, StateLegislationSearch,
+    AcademicSearch,
+    CensusSearch,
+    CongressSearch,
+    CourtSearch,
+    FederalRegisterSearch,
+    RegulationsSearch,
+    StateLegislationSearch,
+    WebSearch,
 )
+from .models import Finding
 
 
 class ToolRegistry:
@@ -27,17 +32,38 @@ class ToolRegistry:
         }
 
     def execute(self, tool_name: str, args: dict[str, Any]) -> tuple[list[Finding], str]:
-        """Execute tool, return (findings, formatted_text)."""
         tool = self._tools.get(tool_name)
         if not tool:
             return [], f"Unknown tool: {tool_name}"
+        findings = tool.execute(**self._normalize_args(tool_name, args))
+        return findings, self._format_findings(findings)
 
-        findings = tool.execute(**args)
+    def _normalize_args(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(args)
+        if tool_name == "census_search" and not normalized.get("geography"):
+            normalized["geography"] = self._default_census_geography()
+        if (
+            tool_name == "state_legislation_search"
+            and len(self.scope.get("states", [])) == 1
+            and not normalized.get("state")
+        ):
+            normalized["state"] = self.scope["states"][0]
+        return normalized
 
-        formatted = []
-        for f in findings:
-            date_str = f" ({f.date})" if f.date else ""
-            cite_str = f" [{f.citations} citations]" if f.citations else ""
-            formatted.append(f"**{f.title}**{date_str}{cite_str}\n{f.snippet}\nSource: {f.url}")
+    def _default_census_geography(self) -> str:
+        if self.scope.get("type") == "state" and self.scope.get("states"):
+            return f"state:{','.join(self.scope['states'])}"
+        return "us"
 
-        return findings, "\n\n---\n\n".join(formatted)
+    def _format_findings(self, findings: list[Finding]) -> str:
+        if not findings:
+            return "No results."
+        parts = []
+        for finding in findings:
+            if finding.is_error:
+                parts.append(f"ERROR [{finding.source_type or 'UNKNOWN'}] {finding.snippet}")
+                continue
+            date_str = f" ({finding.date})" if finding.date else ""
+            cite_str = f" [{finding.citations} citations]" if finding.citations else ""
+            parts.append(f"**{finding.title}**{date_str}{cite_str}\n{finding.snippet}\nSource: {finding.url}")
+        return "\n\n---\n\n".join(parts)

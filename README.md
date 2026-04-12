@@ -20,8 +20,8 @@ cp .env.example .env  # add API keys
 |-----|-------------|--------|------|
 | GOOGLE_API_KEY | Always | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
 | EXA_API_KEY | Always | [dashboard.exa.ai](https://dashboard.exa.ai/api-keys) | Free tier |
-| CONGRESS_GOV_API_KEY | `--scope federal` | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
-| OPENSTATES_API_KEY | `--scope state:XX` | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
+| CONGRESS_GOV_API_KEY | federal or policy research (`--scope federal`, `--compare federal,news`, `--compare policy,...`) | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
+| OPENSTATES_API_KEY | state or policy research (`--scope state:XX`, `--compare CA,NY`, `--compare policy,...`) | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
 | REGULATIONS_GOV_API_KEY | `--scope federal` | [api.data.gov/signup](https://api.data.gov/signup/) | Free |
 | CENSUS_API_KEY | Optional | [api.census.gov/data/key_signup](https://api.census.gov/data/key_signup.html) | Free |
 
@@ -70,12 +70,17 @@ JSON schema:
   "scope": "...",
   "timestamp": "ISO8601",
   "confidence": { "level": "HIGH", "detail": "..." },
-  "findings": [{ "title", "snippet", "url", "date", "source_type", "citations" }],
-  "tool_usage": { "congress_search": 10, ... }
+  "findings": [{ "title", "snippet", "url", "date", "source_type", "citations", "is_error" }],
+  "tool_usage": { "congress_search": 1, ... },
+  "errors": [{ "title", "snippet", "source_type", "is_error" }]
 }
 ```
 
+`tool_usage` counts tool invocations, not individual findings.
+
 ### Compare Mode
+
+Special compare targets are `federal`, `news`, and `policy`.
 
 ```bash
 civic "Paid leave" --compare CA,NY             # state vs state
@@ -101,7 +106,7 @@ civic run ai-regulation-federal -f json        # preset with JSON output
 -o, --output FILE      default: outputs/report.md
 -q, --questions Q      research questions
 -v, --verbose          show tool calls
---sources              show confidence score + source usage
+--sources              show confidence score + tool-call usage
 --no-appendix          exclude source appendix from output
 --limit N              per-tool results cap (default: 25)
 -V, --version
@@ -118,8 +123,8 @@ civic cache clear                              # purge all cached responses
 
 ## Output Features
 
-- **Confidence scoring**: HIGH/MEDIUM/LOW based on source diversity, recency, citations
-- **Source appendix**: Raw findings with dates and URLs for verification
+- **Confidence scoring**: HIGH/MEDIUM/LOW based on successful-source diversity, recency, and citations
+- **Source appendix**: Raw findings with dates and URLs for verification, plus a separate tool-error section
 - **Comparison matrix**: Side-by-side analysis for --compare mode
 - **Response caching**: 24h SQLite cache at `~/.cache/civic/` — repeat queries are instant
 
@@ -140,7 +145,7 @@ civic cache clear                              # purge all cached responses
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
-| CIVIC_MODEL | gemini-2.0-flash | Gemini model for all phases |
+| CIVIC_MODEL | gemini-2.5-flash | Gemini model for all phases |
 | CIVIC_MAX_ITERATIONS | 15 | Max tool calls per research phase |
 
 ## Structure
@@ -149,19 +154,19 @@ civic cache clear                              # purge all cached responses
 src/
 ├── cli.py               # entry, scope/compare parsing, --format json, doctor/get
 ├── _agent_cli.py        # agent-friendly CLI helpers (DoctorCheck, doctor_runner)
-├── agents.py            # gemini orchestration, parallel tool execution
+├── agents.py            # gemini orchestration, scoped compare execution
 ├── prompts.py           # RESEARCHER, WRITER, REVIEWER, COMPARATOR
 ├── output.py            # markdown + JSON output
 └── tools/
     ├── models.py        # Finding, ResearchResults
     ├── declarations.py  # Gemini function specs
     ├── implementations.py  # 8 tool classes
-    ├── registry.py      # ToolRegistry
+    ├── registry.py      # ToolRegistry + scope-aware defaults
     └── base.py          # BaseTool, retry, caching, set_results_limit (default 25)
 tests/
-├── test_cli.py          # scope parsing, env checks
-├── test_models.py       # Finding, ResearchResults, confidence
-└── test_tools.py        # all 8 tools with mocked HTTP
+├── test_cli.py          # scope parsing, env checks, appendix ordering
+├── test_models.py       # Finding, ResearchResults, confidence, error handling
+└── test_tools.py        # all 8 tools with mocked HTTP + scope defaults
 ```
 
 ## Changelog

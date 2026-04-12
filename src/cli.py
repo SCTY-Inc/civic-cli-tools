@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -14,9 +15,17 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from _agent_cli import DoctorCheck, doctor_runner
-from agents import research, write_brief, review, compare_research, write_comparison
+from agents import (
+    combine_results,
+    compare_research,
+    research,
+    review,
+    scope_from_target,
+    write_brief,
+    write_comparison,
+)
 from output import save_report, format_json
-from tools.base import get_cache_stats, clear_cache, set_results_limit
+from tools.base import clear_cache, get_cache_stats, set_results_limit
 
 __version__ = "0.6.0"
 
@@ -45,6 +54,14 @@ STATES = {
 }
 
 TOPICS_FILE = Path(__file__).parent.parent / "topics.toml"
+SPECIAL_COMPARE_TARGETS = {"federal", "news", "policy"}
+REQUIRED_ENV_BY_SCOPE = {
+    "federal": {"CONGRESS_GOV_API_KEY"},
+    "state": {"OPENSTATES_API_KEY"},
+    "all": {"CONGRESS_GOV_API_KEY", "OPENSTATES_API_KEY"},
+    "news": set(),
+    "policy": {"CONGRESS_GOV_API_KEY", "OPENSTATES_API_KEY"},
+}
 
 
 # --- Topics ---
@@ -80,31 +97,41 @@ def parse_scope(scope_str: str) -> dict:
 
 
 def parse_compare(compare_str: str) -> list[str]:
-    targets = [t.strip() for t in compare_str.split(",")]
-    valid_special = {"federal", "news", "policy"}
-    for t in targets:
-        if t not in valid_special and t.upper() not in STATES:
-            raise ValueError(f"Invalid compare target: {t}")
+    targets = []
+    for raw_target in compare_str.split(","):
+        target = raw_target.strip()
+        if not target:
+            continue
+        lowered = target.lower()
+        if lowered in SPECIAL_COMPARE_TARGETS:
+            targets.append(lowered)
+            continue
+        state = target.upper()
+        if state not in STATES:
+            raise ValueError(f"Invalid compare target: {target}")
+        targets.append(state)
+    if len(targets) < 2:
+        raise ValueError("Compare mode requires at least two targets")
     return targets
 
 
+def required_env_vars(scope: dict, compare: list[str] | None = None) -> list[str]:
+    required = {"GOOGLE_API_KEY", "EXA_API_KEY"}
+    scopes = [scope] if not compare else [scope_from_target(target) for target in compare]
+    for current_scope in scopes:
+        required.update(REQUIRED_ENV_BY_SCOPE[current_scope["type"]])
+    return sorted(required)
+
+
 def check_env(scope: dict, compare: list[str] | None = None) -> list[str]:
-    required = ["GOOGLE_API_KEY", "EXA_API_KEY"]
-    if scope["type"] in ("federal", "all"):
-        required.append("CONGRESS_GOV_API_KEY")
-    if scope["type"] in ("state", "all"):
-        required.append("OPENSTATES_API_KEY")
-    if compare:
-        if any(t in ("federal", "policy") for t in compare):
-            if "CONGRESS_GOV_API_KEY" not in required:
-                required.append("CONGRESS_GOV_API_KEY")
-        if any(t.upper() in STATES for t in compare):
-            if "OPENSTATES_API_KEY" not in required:
-                required.append("OPENSTATES_API_KEY")
-    return [v for v in required if not os.getenv(v)]
+    return [name for name in required_env_vars(scope, compare) if not os.getenv(name)]
 
 
 # --- Pipeline runner ---
+
+def _status(message: str, is_json: bool):
+    return nullcontext() if is_json else console.status(message)
+
 
 def run_pipeline(
     topic: str,
@@ -150,45 +177,47 @@ def run_pipeline(
                 console.print(f"[bold]Civic[/] comparing: {topic}")
                 console.print(f"[dim]{' vs '.join(compare_targets)}[/]\n")
 
-            with console.status("[dim]Researching...", disable=is_json):
+            with _status("[dim]Researching...", is_json):
                 outputs = compare_research(topic, compare_targets, questions, verbose and not is_json)
 
             if is_json:
-                all_results = {}
-                for o in outputs:
-                    all_results[o.scope_label] = o.results.to_dict()
                 print(json.dumps({
                     "topic": topic,
                     "mode": "compare",
                     "targets": compare_targets,
-                    "results": all_results,
+                    "results": {output.scope_label: output.results.to_dict() for output in outputs},
                 }, indent=2))
                 return 0
 
             if show_sources:
-                for o in outputs:
-                    console.print(f"\n[bold]{o.scope_label}:[/]")
-                    for tool, count in sorted(o.results.tool_usage.items()):
+                for output in outputs:
+                    console.print(f"\n[bold]{output.scope_label}:[/]")
+                    for tool, count in sorted(output.results.tool_usage.items()):
                         console.print(f"  {tool}: {'[green]' + str(count) + 'x[/]' if count else '[dim]0[/]'}")
 
             console.print("[green]✓[/] Research")
-            with console.status("[dim]Writing comparison..."):
-                final = write_comparison(topic, outputs)
-            console.print("[green]✓[/] Comparison")
+            with _status("[dim]Writing comparison...", is_json):
+                draft = write_comparison(topic, outputs)
+            console.print("[green]✓[/] Draft")
+
+            with _status("[dim]Reviewing...", is_json):
+                final = review(draft)
+            console.print("[green]✓[/] Review")
+
+            combined_results = combine_results(outputs)
+            if not no_appendix and combined_results.findings:
+                final += "\n\n---\n\n" + combined_results.to_appendix()
 
         else:
-            scope_label = scope_str if scope_str != "all" else "federal + state"
-
             if not is_json:
                 console.print(f"[bold]Civic[/] researching: {topic}")
-                console.print(f"[dim]Scope: {scope_label}[/]\n")
+                console.print(f"[dim]Scope: {scope_str}[/]\n")
 
-            with console.status("[dim]Researching...", disable=is_json):
+            with _status("[dim]Researching...", is_json):
                 research_output = research(topic, questions, scope=scope, verbose=verbose and not is_json)
 
             if is_json:
-                results_dict = research_output.results.to_dict()
-                print(format_json(topic, scope_label, results_dict))
+                print(format_json(topic, research_output.scope_label, research_output.results.to_dict()))
                 return 0
 
             console.print("[green]✓[/] Research")
@@ -202,13 +231,16 @@ def run_pipeline(
                     console.print(f"  {tool}: {'[green]' + str(count) + 'x[/]' if count else '[dim]0[/]'}")
                 console.print()
 
-            with console.status("[dim]Writing..."):
-                draft = write_brief(topic, research_output, include_appendix=not no_appendix)
+            with _status("[dim]Writing...", is_json):
+                draft = write_brief(topic, research_output)
             console.print("[green]✓[/] Draft")
 
-            with console.status("[dim]Reviewing..."):
+            with _status("[dim]Reviewing...", is_json):
                 final = review(draft)
             console.print("[green]✓[/] Review")
+
+            if not no_appendix and research_output.results.findings:
+                final += "\n\n---\n\n" + research_output.results.to_appendix()
 
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)

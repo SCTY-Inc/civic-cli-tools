@@ -10,6 +10,7 @@ from tools.implementations import (
     AcademicSearch, CongressSearch, FederalRegisterSearch,
     RegulationsSearch, CourtSearch, CensusSearch, StateLegislationSearch,
 )
+from tools.registry import ToolRegistry
 
 
 @pytest.fixture
@@ -43,6 +44,22 @@ class TestAcademicSearch:
         findings = tool.execute(query="")
         assert len(findings) == 1
         assert findings[0].title == "Error"
+
+    def test_null_abstract_does_not_crash(self, mock_fetch):
+        mock_fetch.return_value = {
+            "data": [{
+                "title": "Paper Title",
+                "abstract": None,
+                "year": 2025,
+                "citationCount": 42,
+                "url": "http://paper",
+                "authors": [{"name": "Author A"}],
+            }]
+        }
+        tool = AcademicSearch()
+        findings = tool.execute(query="test")
+        assert len(findings) == 1
+        assert findings[0].is_error is False
 
     def test_api_error(self, mock_fetch):
         mock_fetch.side_effect = httpx.ConnectError("fail")
@@ -165,13 +182,16 @@ class TestCensusSearch:
 
     def test_geography_state_fips(self):
         tool = CensusSearch()
-        geo = tool._parse_geography("state:CA")
-        assert geo == {"for": "state:06"}
+        assert tool._parse_geography("state:CA,NY") == [{"for": "state:06"}, {"for": "state:36"}]
+
+    def test_geography_county_fips(self):
+        tool = CensusSearch()
+        assert tool._parse_geography("county:06037") == [{"for": "county:037", "in": "state:06"}]
 
     def test_geography_us(self):
         tool = CensusSearch()
-        assert tool._parse_geography("us") == {"for": "us:*"}
-        assert tool._parse_geography("") == {"for": "us:*"}
+        assert tool._parse_geography("us") == [{"for": "us:1"}]
+        assert tool._parse_geography("") == [{"for": "us:1"}]
 
 
 class TestStateLegislationSearch:
@@ -194,8 +214,47 @@ class TestStateLegislationSearch:
         assert "SB-123" in findings[0].title
         assert findings[0].source_type == "STATE_LEG"
 
+    def test_multi_state_scope_queries_each_state(self, monkeypatch):
+        monkeypatch.setenv("OPENSTATES_API_KEY", "test-key")
+        seen = []
+
+        def fake_fetch(*args, **kwargs):
+            jurisdiction = kwargs["params"].get("jurisdiction")
+            seen.append(jurisdiction)
+            return {
+                "results": [{
+                    "identifier": jurisdiction.upper(),
+                    "title": f"Bill {jurisdiction}",
+                    "jurisdiction": {"name": jurisdiction.upper()},
+                    "session": "2025-2026",
+                    "latest_action_description": "Introduced",
+                    "latest_action_date": "2025-04-01",
+                    "openstates_url": f"http://{jurisdiction}",
+                }]
+            }
+
+        tool = StateLegislationSearch(default_states=["CA", "NY"])
+        tool._fetch_json = fake_fetch
+        findings = tool.execute(query="test")
+        assert seen == ["ca", "ny"]
+        assert len(findings) == 2
+
     def test_missing_api_key(self, monkeypatch):
         monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
         tool = StateLegislationSearch()
         findings = tool.execute(query="test")
         assert findings[0].title == "Error"
+
+
+class TestToolRegistry:
+    def test_defaults_census_geography_from_scope(self):
+        registry = ToolRegistry({"type": "state", "states": ["CA", "NY"]})
+        captured = {}
+
+        def fake_execute(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        registry._tools["census_search"].execute = fake_execute
+        registry.execute("census_search", {"topic": "population"})
+        assert captured["geography"] == "state:CA,NY"

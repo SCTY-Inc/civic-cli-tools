@@ -10,6 +10,8 @@ uv run civic "topic"             # all sources
 uv run civic "topic" -s federal  # federal only
 uv run civic "topic" -s state:CA # state only
 uv run civic "topic" -v          # verbose
+uv run civic "topic" --compare CA,NY
+uv run civic "topic" --sources   # confidence + tool-call audit
 uv run civic "topic" -f json     # JSON output (for agents)
 uv run civic "topic" --limit 10  # per-tool results cap (default 25)
 uv run civic -                   # read topic from stdin
@@ -27,11 +29,11 @@ Honors `NO_COLOR` and auto-disables Rich formatting when stdout is not a TTY.
 
 ```
 src/
-├── cli.py           # entry, scope parsing, --format json, doctor/get subcommands
+├── cli.py           # entry, scope parsing, compare/env handling, --format json, doctor/get subcommands
 ├── _agent_cli.py    # agent-friendly CLI helpers (DoctorCheck, doctor_runner)
-├── agents.py        # gemini, multi-tool loop, parallel execution
+├── agents.py        # gemini, multi-tool loop, scoped compare execution
 ├── prompts.py       # system prompts
-├── output.py        # markdown + JSON output
+├── output.py        # markdown + JSON output (UTC timestamps)
 └── tools/
     ├── base.py            # BaseTool, retry, caching, set_results_limit (default 25)
     ├── models.py          # Finding, ResearchResults
@@ -58,7 +60,8 @@ src/
 - `federal` → web, academic, census, congress, federal_register, regulations, court
 - `state:XX` → web, academic, census, state_legislation
 - `all` → all 8 tools
+- compare-only targets: `news` → web, `policy` → congress + federal_register + regulations + court + state_legislation
 
 ## Model
 
-`gemini-2.0-flash` in `src/agents.py:MODEL` (configurable via `CIVIC_MODEL` env var)
+`gemini-2.5-flash` in `src/agents.py:MODEL` (configurable via `CIVIC_MODEL` env var)

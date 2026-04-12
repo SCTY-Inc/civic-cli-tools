@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import random
 import sqlite3
 import time
 from abc import ABC, abstractmethod
@@ -12,40 +13,36 @@ import httpx
 
 from .models import Finding
 
-RESULTS_LIMIT = 25  # module-level default; override via set_results_limit()
+RESULTS_LIMIT = 25
 TIMEOUT = 30
+MAX_RETRIES = 3
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+CACHE_TTL = 86400
+CACHE_DIR = Path.home() / ".cache" / "civic"
+_DB_PATH = CACHE_DIR / "cache.db"
 
 
 def set_results_limit(n: int) -> None:
     """Override the per-tool results limit (default 25)."""
     global RESULTS_LIMIT
-    if n is not None and n > 0:
+    if n and n > 0:
         RESULTS_LIMIT = int(n)
-MAX_RETRIES = 3
-CACHE_TTL = 86400  # 24 hours
-CACHE_DIR = Path.home() / ".cache" / "civic"
-_DB_PATH = CACHE_DIR / "cache.db"
 
 
 def _get_cache_db() -> sqlite3.Connection:
-    """Get or create cache database with WAL mode."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(_DB_PATH))
     db.execute("PRAGMA journal_mode=WAL")
-    db.execute(
-        "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, ts REAL)"
-    )
+    db.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, ts REAL)")
     return db
 
 
 def _cache_key(url: str, params: dict | None) -> str:
-    """Generate cache key from request parameters."""
     raw = json.dumps({"url": url, "params": params or {}}, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def get_cache_stats() -> dict | None:
-    """Return cache stats or None if no cache exists."""
     if not _DB_PATH.exists():
         return None
     db = _get_cache_db()
@@ -64,7 +61,6 @@ def get_cache_stats() -> dict | None:
 
 
 def clear_cache() -> bool:
-    """Delete cache database. Returns True if cache existed."""
     if _DB_PATH.exists():
         _DB_PATH.unlink()
         return True
@@ -79,36 +75,42 @@ class BaseTool(ABC):
     @abstractmethod
     def execute(self, **kwargs) -> list[Finding]:
         """Execute the tool and return findings."""
-        pass
 
     def _error(self, message: str) -> list[Finding]:
-        """Return error as Finding."""
-        return [Finding(title="Error", snippet=message, url="", source_type=self.SOURCE_TYPE)]
+        return [
+            Finding(
+                title="Error",
+                snippet=message,
+                url="",
+                source_type=self.SOURCE_TYPE,
+                is_error=True,
+            )
+        ]
 
-    def _fetch_json(self, url: str, params: dict = None, headers: dict = None) -> dict:
-        """Fetch JSON with retry, backoff, and caching."""
+    def _fetch_json(self, url: str, params: dict | None = None, headers: dict | None = None) -> dict:
+        """Fetch JSON with retry, backoff, and SQLite caching."""
         key = _cache_key(url, params)
+        db: sqlite3.Connection | None = None
 
-        # Single DB connection for both read and write
         try:
             db = _get_cache_db()
             row = db.execute("SELECT value, ts FROM cache WHERE key = ?", (key,)).fetchone()
             if row and (time.time() - row[1]) < CACHE_TTL:
+                cached = json.loads(row[0])
                 db.close()
-                return json.loads(row[0])
+                return cached
         except sqlite3.Error:
+            if db:
+                db.close()
             db = None
 
-        # Fetch with retry + exponential backoff, reuse client
         last_error: Exception | None = None
         with httpx.Client(timeout=TIMEOUT) as client:
             for attempt in range(MAX_RETRIES):
                 try:
-                    resp = client.get(url, params=params, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-
-                    # Store in cache (reuse existing connection if available)
+                    response = client.get(url, params=params, headers=headers)
+                    response.raise_for_status()
+                    data = response.json()
                     try:
                         if db is None:
                             db = _get_cache_db()
@@ -122,28 +124,26 @@ class BaseTool(ABC):
                     finally:
                         if db:
                             db.close()
-
+                            db = None
                     return data
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code if exc.response else 0
+                    if status not in RETRYABLE_STATUS or attempt == MAX_RETRIES - 1:
+                        if status == 429:
+                            raise RuntimeError("Rate limited by upstream API") from exc
+                        raise RuntimeError(f"HTTP error ({status})") from exc
+                    last_error = RuntimeError(f"Transient upstream error ({status})")
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    last_error = RuntimeError(f"Network error: {exc}")
+                    if attempt == MAX_RETRIES - 1:
+                        raise last_error from exc
 
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in (429, 500, 502, 503, 504):
-                        last_error = e
-                        if attempt < MAX_RETRIES - 1:
-                            time.sleep(2**attempt)
-                        continue
-                    if db:
-                        db.close()
-                    raise
-                except (httpx.TimeoutException, httpx.ConnectError) as e:
-                    last_error = e
-                    if attempt < MAX_RETRIES - 1:
-                        time.sleep(2**attempt)
+                time.sleep((0.25 * (2**attempt)) + random.uniform(0, 0.1))
 
         if db:
             db.close()
-        raise last_error or httpx.ConnectError("Max retries exceeded")
+        raise last_error or RuntimeError("Request failed")
 
 
 def get_env_key(name: str) -> str | None:
-    """Get environment variable, return None if not set."""
     return os.getenv(name)
