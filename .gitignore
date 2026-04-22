@@ -25,9 +25,10 @@ report/
 output/
 outputs/
 
-# IDE
+# IDE / local agent state
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 
