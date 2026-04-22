@@ -43,12 +43,14 @@ def test_congress_extractor_pulls_identifier_and_status():
     assert sig["jurisdiction"] == "federal"
     assert sig["source_system"] == "congress.gov"
     assert sig["source_tool"] == "congress_search"
+    assert sig["signal_kind"] == "bill_referred"
+    assert sig["pending"] is True
 
 
 def test_federal_register_extractor_pulls_document_id():
     f = Finding(
         title="CMS final rule on HCBS",
-        snippet="New rule text",
+        snippet="Type: Rule | Agency: CMS",
         url="https://www.federalregister.gov/documents/2024/03/15/2024-05432/cms-rule",
         date="2024-03-15",
         source_type="FED_REGISTER",
@@ -56,12 +58,15 @@ def test_federal_register_extractor_pulls_document_id():
     sig = module.signal_from_finding(f)
     assert sig["identifier"] == "2024-05432"
     assert sig["jurisdiction"] == "federal"
+    assert sig["status"] == "Rule"
+    assert sig["signal_kind"] == "final_rule"
+    assert sig["pending"] is False
 
 
 def test_state_leg_extractor_infers_state():
     f = Finding(
         title="SB 525: In-home support wages",
-        snippet="California Senate",
+        snippet="State: California | Session: 2023-2024 | Latest: Passed Assembly",
         url="https://openstates.org/CA/bills/20232024/SB525/",
         date="2023-09-12",
         source_type="STATE_LEG",
@@ -69,6 +74,9 @@ def test_state_leg_extractor_infers_state():
     sig = module.signal_from_finding(f)
     assert sig["jurisdiction"] == "state:CA"
     assert sig["identifier"] == "SB525"
+    assert sig["status"] == "Passed Assembly"
+    assert sig["signal_kind"] == "bill_advanced"
+    assert sig["pending"] is True
 
 
 def test_legiscan_extractor_infers_state():
@@ -82,11 +90,14 @@ def test_legiscan_extractor_infers_state():
     sig = module.signal_from_finding(f)
     assert sig["jurisdiction"] == "state:CA"
     assert sig["identifier"] == "AB2324"
+    assert sig["status"] == "Re-referred to Com. on APPR."
+    assert sig["signal_kind"] == "bill_referred"
+    assert sig["pending"] is True
     assert sig["source_system"] == "legiscan.com"
     assert sig["source_tool"] == "state_legislation_search"
 
 
-def test_emit_signals_dedupes_by_url_and_counts():
+def test_emit_signals_dedupes_by_signal_id_and_counts():
     results = ResearchResults()
     f1 = Finding(
         title="HR2406: Credit for Caring Act",
@@ -96,11 +107,11 @@ def test_emit_signals_dedupes_by_url_and_counts():
         source_type="CONGRESS",
     )
     results.add(f1, "congress_search")
-    # Duplicate URL — should be dropped.
+    # Exact duplicate signal — should be dropped.
     results.add(f1, "congress_search")
     f2 = Finding(
         title="CMS rule on HCBS",
-        snippet="",
+        snippet="Type: Rule | Agency: CMS",
         url="https://www.federalregister.gov/documents/2024/03/15/2024-05432/cms",
         date="2024-03-15",
         source_type="FED_REGISTER",
@@ -113,6 +124,35 @@ def test_emit_signals_dedupes_by_url_and_counts():
     assert out["counts"]["signals"] == 2
     assert out["counts"]["by_source_type"] == {"CONGRESS": 1, "FED_REGISTER": 1}
     assert {s["source_type"] for s in out["signals"]} == {"CONGRESS", "FED_REGISTER"}
+
+
+def test_emit_signals_keeps_distinct_bill_movements_for_same_url():
+    results = ResearchResults()
+    url = "https://www.congress.gov/bill/118th-congress/house-bill/2406"
+    results.add(
+        Finding(
+            title="HR2406: Credit for Caring Act",
+            snippet="Congress 118 | Status: Introduced",
+            url=url,
+            date="2024-04-12",
+            source_type="CONGRESS",
+        ),
+        "congress_search",
+    )
+    results.add(
+        Finding(
+            title="HR2406: Credit for Caring Act",
+            snippet="Congress 118 | Status: Passed House",
+            url=url,
+            date="2024-05-02",
+            source_type="CONGRESS",
+        ),
+        "congress_search",
+    )
+
+    out = json.loads(module.emit_signals("caregiver policy", "pulse-policy-weekly", "policy", results))
+    assert out["counts"]["signals"] == 2
+    assert [s["signal_kind"] for s in out["signals"]] == ["bill_introduced", "bill_advanced"]
 
 
 def test_academic_preserves_citations():

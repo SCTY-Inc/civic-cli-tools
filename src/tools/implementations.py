@@ -224,7 +224,8 @@ class CongressSearch(BaseTool):
                         f"Status: {_as_string(latest_action.get('text'), 'N/A')}"
                     ),
                     url=_as_string(bill.get("url")),
-                    date=_as_string(bill.get("introducedDate")),
+                    date=_as_string(latest_action.get("actionDate"))
+                    or _as_string(bill.get("introducedDate")),
                     source_type=self.SOURCE_TYPE,
                 )
             )

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from scopes import Scope
 
+from .declarations import get_available_tool_names
 from .models import Finding
 from .implementations import (
     AcademicSearch,
@@ -22,7 +23,7 @@ class ToolRegistry:
 
     def __init__(self, scope: Scope):
         self.scope = scope
-        self._tools = {
+        all_tools = {
             "web_search": WebSearch(),
             "academic_search": AcademicSearch(),
             "census_search": CensusSearch(),
@@ -31,6 +32,11 @@ class ToolRegistry:
             "regulations_search": RegulationsSearch(),
             "court_search": CourtSearch(),
             "state_legislation_search": StateLegislationSearch(scope.get("states", [])),
+        }
+        self._tools = {
+            name: tool
+            for name, tool in all_tools.items()
+            if name in get_available_tool_names(scope)
         }
 
     def execute(self, tool_name: str, args: Mapping[str, object]) -> tuple[list[Finding], str]:

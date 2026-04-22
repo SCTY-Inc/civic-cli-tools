@@ -61,16 +61,23 @@ civic get https://example.com -f json          # JSON envelope (status, headers,
 
 ```bash
 civic signals pulse-policy-weekly               # preset → atomic per-finding JSON
-civic signals --topic "HCBS policy" -s federal # ad-hoc topic → atomic signals
+civic signals --topic "family caregiver policy" -s policy --limit 2
 ```
 
 `civic signals` reuses the research loop but skips write/review and emits the atomic JSON envelope directly. It is used by GiveCare's `apps/web-pulse/scripts/pulse_wiki_ingest_civic.py`.
+Pulse's `pulse-policy-weekly` preset now runs with `scope = "policy"`, so it favors Congress, Federal Register, Regulations.gov, court, and state-legislation movement over web, academic, or Census background material.
 
 Signal inputs:
 - positional `preset` from `topics.toml`, or `--topic` for ad-hoc use
 - with `--topic`: `-s/--scope`, `-c/--compare`, `-q/--questions`
 - optional: `--limit`, `-v`
 - Pulse currently shells `civic signals <preset> [--limit N]`
+
+Bill-like signals include movement metadata when available:
+- `status` — latest bill/rule action text
+- `signal_kind` — normalized movement such as `bill_referred`, `bill_advanced`, `proposed_rule`
+- `pending` — whether the item still represents an active/pending policy movement
+- movement-aware `id` values — later bill actions can surface as distinct signals instead of collapsing to one URL
 
 ### JSON Output (for agents)
 
@@ -111,7 +118,7 @@ civic run ai-regulation-federal -f json        # preset with JSON output
 ## Options
 
 ```
--s, --scope SCOPE      federal | state:XX | all (default)
+-s, --scope SCOPE      federal | state:XX | all | news | policy (default)
 -c, --compare A,B      compare targets: CA,NY or federal,CA or policy,news
 -f, --format FMT       markdown (file) | json (stdout)
 -o, --output FILE      default: outputs/report.md
@@ -145,6 +152,7 @@ civic cache clear                              # purge all cached responses
 - **Confidence scoring**: HIGH/MEDIUM/LOW based on source diversity, recency, citations
 - **Source appendix**: Raw findings with dates and URLs for verification
 - **Atomic signals JSON**: Stable per-finding envelope for web-pulse ingestion and other downstream consumers
+- **Policy movement metadata**: bill/rule signals include status, normalized movement kind, pending state, and movement-aware IDs
 - **Comparison matrix**: Side-by-side analysis for --compare mode
 - **Response caching**: 24h SQLite cache at `~/.cache/civic/` — repeat queries are instant
 
@@ -210,7 +218,7 @@ tests/
 - Dependencies: 50+ → 5
 - Install size: 918MB → ~50MB
 - Data sources: 1 (web) → 8 (gov + academic APIs)
-- Tests: 0 → 70
+- Tests: 0 → 74
 
 ## License
 

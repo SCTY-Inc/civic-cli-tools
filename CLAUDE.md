@@ -9,6 +9,7 @@ uv sync                          # install
 uv run civic "topic"             # all sources
 uv run civic "topic" -s federal  # federal only
 uv run civic "topic" -s state:CA # state only
+uv run civic "topic" -s policy   # policy-primary sources only
 uv run civic "topic" -v          # verbose
 uv run civic "topic" -f json     # JSON output (for agents)
 uv run civic "topic" --limit 10  # per-tool results cap (default 25)
@@ -25,7 +26,7 @@ uv run civic cache clear         # purge cached responses
 
 Honors `NO_COLOR` and auto-disables Rich formatting when stdout is not a TTY.
 
-`civic signals` accepts either a preset name from `topics.toml` or `--topic` for ad-hoc use. The ad-hoc path also accepts `--scope`, `--compare`, `--questions`, `--limit`, and `--verbose`. Signals mode skips write/review and emits the research findings as atomic JSON.
+`civic signals` accepts either a preset name from `topics.toml` or `--topic` for ad-hoc use. The ad-hoc path also accepts `--scope`, `--compare`, `--questions`, `--limit`, and `--verbose`. Signals mode skips write/review and emits the research findings as atomic JSON. For Pulse, `pulse-policy-weekly` now uses `scope = "policy"` and emits movement-oriented metadata such as `status`, `signal_kind`, `pending`, and movement-aware IDs for bill-like items.
 
 ## Files
 
@@ -63,9 +64,11 @@ src/
 
 - `federal` → web, academic, census, congress, federal_register, regulations, court
 - `state:XX` → web, academic, census, state_legislation
+- `news` → web only
+- `policy` → congress, federal_register, regulations, court, state_legislation
 - `all` → all 8 tools
 
-Tools gated by optional API keys are omitted from Gemini's tool list when the key is missing; the rest of the run still proceeds. LegiScan is only exposed for single-state scopes and is used as a situational fallback for state legislation search.
+Tools gated by optional API keys are omitted from Gemini's tool list when the key is missing; the rest of the run still proceeds. ToolRegistry only executes tools that are currently available for the requested scope, so out-of-scope tool calls are rejected instead of leaking broader research into policy-only runs. LegiScan is only exposed for single-state scopes and is used as a situational fallback for state legislation search.
 
 ## Model
 

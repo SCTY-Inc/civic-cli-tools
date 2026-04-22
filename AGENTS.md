@@ -14,6 +14,7 @@ research (available tools, parallel) → signals envelope → stdout (JSON)
 
 Signals mode reuses the normal research phase and skips only the writer/reviewer steps.
 Inputs are either a preset name from `topics.toml` or an ad-hoc `--topic` plus the usual `--scope`, `--compare`, `--questions`, `--limit`, and `--verbose` flags.
+For Pulse, `pulse-policy-weekly` now runs with `scope = "policy"` so the feed favors concrete policy movement from Congress, Federal Register, Regulations.gov, courts, and state legislation.
 
 ## 1. Researcher
 
@@ -30,6 +31,7 @@ Tools by scope:
 Behavior:
 - MUST use ALL available tools (enforced via prompt)
 - Tools gated by optional API keys are omitted from Gemini's tool list when the key is missing
+- ToolRegistry only executes tools that are available for the requested scope; undeclared/out-of-scope tool calls are rejected
 - Parallel tool execution via ThreadPoolExecutor
 - Tool adapters return `ToolResult(findings, errors)`; only successful findings are added to `ResearchResults`
 - Returns `ResearchOutput` with findings + metadata
@@ -150,5 +152,6 @@ uv run civic get <url> -f json                 # fetch arbitrary URL as JSON env
 
 `civic -f json` returns structured JSON with findings, confidence, and tool usage.
 `civic signals ...` returns a stable signals envelope (`schema_version = 1`) for downstream ingestion.
+Bill-like signals now carry movement metadata (`status`, `signal_kind`, `pending`) and use movement-aware IDs so later actions on the same bill can surface as distinct signals.
 Exit code 0 on success, 1 on error, 130 on interrupt.
 Rich formatting auto-disables when stdout is not a TTY or when `NO_COLOR` is set.

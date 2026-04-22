@@ -114,7 +114,7 @@ output = "outputs/medicaid-hcbs-spending.md"
 
 [topics.pulse-policy-weekly]
 topic = "caregiving policy, home-based care, paid family leave, direct care workforce"
-scope = "all"
+scope = "policy"
 questions = [
     "What federal or state bills, rules, and filings this month materially affect family caregivers, paid leave, HCBS, or direct care workers?",
     "What new CMS or HHS guidance affects caregiver reimbursement or home-based care?",

@@ -517,7 +517,7 @@ def _build_adhoc_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("topic", help="Policy topic to research (use '-' to read from stdin)")
     parser.add_argument("-s", "--scope", default="all",
-                        help="federal | state:XX | all (default: all)")
+                        help="federal | state:XX | all | news | policy (default: all)")
     parser.add_argument("-c", "--compare", metavar="A,B",
                         help="Compare targets: CA,NY or federal,CA or policy,news")
     parser.add_argument("-o", "--output", default="outputs/report.md")
@@ -579,7 +579,7 @@ Examples:
     signals_parser.add_argument("preset", nargs="?", help="Preset name from topics.toml")
     signals_parser.add_argument("--topic", help="Ad-hoc topic (alternative to preset)")
     signals_parser.add_argument("-s", "--scope", default="all",
-                                 help="federal | state:XX | all (used with --topic)")
+                                 help="federal | state:XX | all | news | policy (used with --topic)")
     signals_parser.add_argument("-c", "--compare", metavar="A,B",
                                  help="Compare targets (used with --topic)")
     signals_parser.add_argument("-q", "--questions", nargs="+", metavar="Q")

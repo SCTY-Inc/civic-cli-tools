@@ -17,6 +17,9 @@ class TestParseScope:
     def test_all(self):
         assert parse_scope("all") == {"type": "all", "states": []}
 
+    def test_policy(self):
+        assert parse_scope("policy") == {"type": "policy", "states": []}
+
     def test_single_state(self):
         assert parse_scope("state:CA") == {"type": "state", "states": ["CA"]}
 

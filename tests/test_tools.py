@@ -141,6 +141,28 @@ class TestCongressSearch:
         assert "HR1234" in result.findings[0].title
         assert result.findings[0].source_type == "CONGRESS"
 
+    def test_prefers_latest_action_date_when_available(self, mock_fetch, monkeypatch):
+        monkeypatch.setenv("CONGRESS_GOV_API_KEY", "test-key")
+        mock_fetch.return_value = {
+            "bills": [
+                {
+                    "type": "HR",
+                    "number": "1234",
+                    "title": "Test Act",
+                    "congress": 119,
+                    "latestAction": {
+                        "text": "Passed House",
+                        "actionDate": "2025-02-01",
+                    },
+                    "url": "http://bill",
+                    "introducedDate": "2025-01-15",
+                }
+            ]
+        }
+        result = CongressSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].date == "2025-02-01"
+
     def test_missing_api_key(self, monkeypatch):
         monkeypatch.delenv("CONGRESS_GOV_API_KEY", raising=False)
         result = CongressSearch().execute(query="test")
@@ -320,6 +342,13 @@ class TestRegistry:
 
         assert findings == []
         assert formatted == "Tool error: boom"
+
+    def test_policy_scope_rejects_undeclared_tool_calls(self, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "test-key")
+        registry = ToolRegistry({"type": "policy", "states": []})
+        findings, formatted = registry.execute("web_search", {"query": "test"})
+        assert findings == []
+        assert formatted == "Unknown tool: web_search"
 
     def test_unexpected_tool_exception_is_not_hidden(self):
         registry = ToolRegistry({"type": "all", "states": []})

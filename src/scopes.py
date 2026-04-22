@@ -24,10 +24,8 @@ DEFAULT_SCOPE: Scope = {"type": "all", "states": []}
 
 def parse_scope(scope_str: str) -> Scope:
     """Parse a CLI scope string into a normalized scope dict."""
-    if scope_str == "federal":
-        return {"type": "federal", "states": []}
-    if scope_str == "all":
-        return {"type": "all", "states": []}
+    if scope_str in {"federal", "all", "news", "policy"}:
+        return {"type": scope_str, "states": []}
     if scope_str.startswith("state:"):
         states = [state.strip().upper() for state in scope_str[6:].split(",")]
         invalid = [state for state in states if state not in VALID_STATES]
@@ -35,7 +33,7 @@ def parse_scope(scope_str: str) -> Scope:
             raise ValueError(f"Invalid state codes: {', '.join(invalid)}")
         return {"type": "state", "states": states}
     raise ValueError(
-        f"Invalid scope: {scope_str}. Use 'federal', 'all', or 'state:CA,NY'"
+        f"Invalid scope: {scope_str}. Use 'federal', 'all', 'news', 'policy', or 'state:CA,NY'"
     )
 
 
