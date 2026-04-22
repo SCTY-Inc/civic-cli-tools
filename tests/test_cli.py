@@ -1,9 +1,12 @@
 """Tests for CLI scope parsing and validation."""
 
+import json
+
 import cli
 import pytest
 from agents import ResearchOutput
-from cli import check_env, parse_compare, parse_scope, run_pipeline
+from cli import check_env, load_topics, parse_compare, parse_scope, run_pipeline
+from tools.declarations import get_tool_declarations
 from tools.models import Finding, ResearchResults
 
 
@@ -46,9 +49,6 @@ class TestParseCompare:
     def test_special_targets(self):
         assert parse_compare("federal,news,policy") == ["federal", "news", "policy"]
 
-    def test_special_targets_are_case_insensitive(self):
-        assert parse_compare("FEDERAL,News,ca") == ["federal", "news", "CA"]
-
     def test_invalid_target(self):
         with pytest.raises(ValueError, match="Invalid compare target"):
             parse_compare("federal,INVALID")
@@ -56,63 +56,101 @@ class TestParseCompare:
     def test_states_only(self):
         assert parse_compare("CA,NY,TX") == ["CA", "NY", "TX"]
 
-    def test_requires_at_least_two_targets(self):
-        with pytest.raises(ValueError, match="at least two targets"):
-            parse_compare("CA")
-
 
 class TestCheckEnv:
-    def test_always_requires_google_and_exa(self, monkeypatch):
+    def test_all_scope_requires_google_and_exa(self, monkeypatch):
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
         monkeypatch.delenv("EXA_API_KEY", raising=False)
         missing = check_env({"type": "all", "states": []})
-        assert "GOOGLE_API_KEY" in missing
-        assert "EXA_API_KEY" in missing
+        assert missing == ["GOOGLE_API_KEY", "EXA_API_KEY"]
 
-    def test_federal_requires_congress_key(self, monkeypatch):
+    def test_federal_does_not_require_optional_keys(self, monkeypatch):
         monkeypatch.setenv("GOOGLE_API_KEY", "x")
         monkeypatch.setenv("EXA_API_KEY", "x")
         monkeypatch.delenv("CONGRESS_GOV_API_KEY", raising=False)
         missing = check_env({"type": "federal", "states": []})
-        assert "CONGRESS_GOV_API_KEY" in missing
+        assert missing == []
 
-    def test_state_requires_openstates_key(self, monkeypatch):
-        monkeypatch.setenv("GOOGLE_API_KEY", "x")
-        monkeypatch.setenv("EXA_API_KEY", "x")
-        monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
-        missing = check_env({"type": "state", "states": ["CA"]})
-        assert "OPENSTATES_API_KEY" in missing
-
-    def test_compare_uses_compare_targets_not_default_scope(self, monkeypatch):
-        monkeypatch.setenv("GOOGLE_API_KEY", "x")
-        monkeypatch.setenv("EXA_API_KEY", "x")
-        monkeypatch.delenv("CONGRESS_GOV_API_KEY", raising=False)
-        monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
-        assert check_env({"type": "all", "states": []}, ["CA", "NY"]) == ["OPENSTATES_API_KEY"]
-        assert check_env({"type": "all", "states": []}, ["federal", "news"]) == ["CONGRESS_GOV_API_KEY"]
+    def test_policy_compare_only_requires_google(self, monkeypatch):
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        missing = check_env({"type": "all", "states": []}, ["policy"])
+        assert missing == ["GOOGLE_API_KEY"]
 
     def test_all_keys_present(self, monkeypatch):
-        for key in ["GOOGLE_API_KEY", "EXA_API_KEY", "CONGRESS_GOV_API_KEY", "OPENSTATES_API_KEY"]:
+        for key in ["GOOGLE_API_KEY", "EXA_API_KEY"]:
             monkeypatch.setenv(key, "x")
         missing = check_env({"type": "all", "states": []})
         assert missing == []
 
 
+class TestTopics:
+    def test_load_topics_prefers_current_directory(self, monkeypatch, tmp_path):
+        (tmp_path / "topics.toml").write_text('[topics.demo]\ntopic = "Demo"\n')
+        monkeypatch.chdir(tmp_path)
+        topics = load_topics()
+        assert topics["demo"]["topic"] == "Demo"
+
+    def test_declarations_skip_optional_tools_without_keys(self, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "x")
+        monkeypatch.delenv("CONGRESS_GOV_API_KEY", raising=False)
+        monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
+        monkeypatch.delenv("LEGISCAN_API_KEY", raising=False)
+        monkeypatch.delenv("REGULATIONS_GOV_API_KEY", raising=False)
+        names = [d.name for d in get_tool_declarations({"type": "all", "states": []})]
+        assert "web_search" in names
+        assert "congress_search" not in names
+        assert "regulations_search" not in names
+        assert "state_legislation_search" not in names
+
+    def test_state_scope_includes_state_legislation_with_legiscan_only(self, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "x")
+        monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
+        monkeypatch.setenv("LEGISCAN_API_KEY", "x")
+        names = [d.name for d in get_tool_declarations({"type": "state", "states": ["CA"]})]
+        assert "state_legislation_search" in names
+
+    def test_all_scope_skips_state_legislation_with_legiscan_only(self, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "x")
+        monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
+        monkeypatch.setenv("LEGISCAN_API_KEY", "x")
+        names = [d.name for d in get_tool_declarations({"type": "all", "states": []})]
+        assert "state_legislation_search" not in names
+
+
 class TestRunPipeline:
-    def test_appendix_is_added_after_review(self, monkeypatch, tmp_path):
-        for key in ["GOOGLE_API_KEY", "EXA_API_KEY", "CONGRESS_GOV_API_KEY", "OPENSTATES_API_KEY"]:
-            monkeypatch.setenv(key, "x")
+    def test_json_mode_does_not_open_status_spinner(self, monkeypatch, capsys):
+        class StubConsole:
+            def status(self, *args, **kwargs):
+                raise AssertionError("status spinner should be skipped in json mode")
 
-        results = ResearchResults(findings=[Finding(title="Source", snippet="S", url="http://x", source_type="WEB")])
-        results.record_tool_call("web_search")
-        output = ResearchOutput(text="synthesis", results=results, scope_label="all")
-        saved = {}
+            def print(self, *args, **kwargs):
+                pass
 
-        monkeypatch.setattr(cli, "research", lambda *args, **kwargs: output)
-        monkeypatch.setattr(cli, "write_brief", lambda *args, **kwargs: "DRAFT")
-        monkeypatch.setattr(cli, "review", lambda draft: f"REVIEWED::{draft}")
-        monkeypatch.setattr(cli, "save_report", lambda content, path: saved.update(content=content, path=path))
+            def print_exception(self, *args, **kwargs):
+                raise AssertionError("unexpected exception")
 
-        code = run_pipeline("topic", output_path=str(tmp_path / "report.md"))
-        assert code == 0
-        assert saved["content"].startswith("REVIEWED::DRAFT\n\n---\n\n## Appendix: Source Data")
+        results = ResearchResults(
+            findings=[Finding(title="Title", snippet="Snippet", url="http://x", source_type="WEB")],
+            tool_usage={"web_search": 1},
+        )
+
+        monkeypatch.setattr(cli, "console", StubConsole())
+        monkeypatch.setattr(cli, "err_console", StubConsole())
+        monkeypatch.setattr(cli, "check_env", lambda scope, compare=None: [])
+        monkeypatch.setattr(
+            cli,
+            "research",
+            lambda topic, questions, scope, verbose: ResearchOutput(
+                text="Research text",
+                results=results,
+                scope_label="federal + state",
+            ),
+        )
+
+        exit_code = run_pipeline("family caregiver policy", output_format="json")
+        payload = json.loads(capsys.readouterr().out)
+
+        assert exit_code == 0
+        assert payload["topic"] == "family caregiver policy"
+        assert payload["findings"][0]["title"] == "Title"

@@ -1,7 +1,15 @@
 """Research tools for policy analysis."""
 
-from .models import Finding, ResearchResults
-from .declarations import get_tool_declarations
+from .models import Finding, ResearchResults, ToolResult
+from .declarations import get_available_tool_names, get_tool_declarations, get_tool_names
 from .registry import ToolRegistry
 
-__all__ = ["Finding", "ResearchResults", "get_tool_declarations", "ToolRegistry"]
+__all__ = [
+    "Finding",
+    "ResearchResults",
+    "ToolResult",
+    "get_available_tool_names",
+    "get_tool_declarations",
+    "get_tool_names",
+    "ToolRegistry",
+]

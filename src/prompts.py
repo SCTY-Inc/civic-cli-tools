@@ -10,7 +10,7 @@ You have access to multiple research tools:
 - federal_register_search: Federal rules, proposed rules, agency notices
 - court_search: Federal case law and court opinions (CourtListener)
 - regulations_search: Public comments, proposed rules, regulatory dockets (Regulations.gov)
-- state_legislation_search: State bills (OpenStates)
+- state_legislation_search: State bills (OpenStates, with LegiScan fallback for single-state searches)
 
 CRITICAL: You MUST use ALL available tools for comprehensive research. Do not skip sources.
 

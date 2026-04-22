@@ -1,7 +1,10 @@
 """Tool registry for executing tools by name."""
 
-from typing import Any
+from collections.abc import Mapping
 
+from scopes import Scope
+
+from .models import Finding
 from .implementations import (
     AcademicSearch,
     CensusSearch,
@@ -12,13 +15,12 @@ from .implementations import (
     StateLegislationSearch,
     WebSearch,
 )
-from .models import Finding
 
 
 class ToolRegistry:
     """Registry for executing tools by name."""
 
-    def __init__(self, scope: dict):
+    def __init__(self, scope: Scope):
         self.scope = scope
         self._tools = {
             "web_search": WebSearch(),
@@ -31,39 +33,29 @@ class ToolRegistry:
             "state_legislation_search": StateLegislationSearch(scope.get("states", [])),
         }
 
-    def execute(self, tool_name: str, args: dict[str, Any]) -> tuple[list[Finding], str]:
+    def execute(self, tool_name: str, args: Mapping[str, object]) -> tuple[list[Finding], str]:
+        """Execute tool, return (findings, formatted_text)."""
         tool = self._tools.get(tool_name)
         if not tool:
             return [], f"Unknown tool: {tool_name}"
-        findings = tool.execute(**self._normalize_args(tool_name, args))
-        return findings, self._format_findings(findings)
 
-    def _normalize_args(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        normalized = dict(args)
-        if tool_name == "census_search" and not normalized.get("geography"):
-            normalized["geography"] = self._default_census_geography()
-        if (
-            tool_name == "state_legislation_search"
-            and len(self.scope.get("states", [])) == 1
-            and not normalized.get("state")
-        ):
-            normalized["state"] = self.scope["states"][0]
-        return normalized
+        result = tool.execute(**args)
 
-    def _default_census_geography(self) -> str:
-        if self.scope.get("type") == "state" and self.scope.get("states"):
-            return f"state:{','.join(self.scope['states'])}"
-        return "us"
+        errors = [f"Tool error: {message}" for message in result.errors]
+        findings = result.findings
 
-    def _format_findings(self, findings: list[Finding]) -> str:
         if not findings:
-            return "No results."
-        parts = []
-        for finding in findings:
-            if finding.is_error:
-                parts.append(f"ERROR [{finding.source_type or 'UNKNOWN'}] {finding.snippet}")
-                continue
-            date_str = f" ({finding.date})" if finding.date else ""
-            cite_str = f" [{finding.citations} citations]" if finding.citations else ""
-            parts.append(f"**{finding.title}**{date_str}{cite_str}\n{finding.snippet}\nSource: {finding.url}")
-        return "\n\n---\n\n".join(parts)
+            if errors:
+                return [], "\n".join(errors)
+            return [], "No results."
+
+        formatted = []
+        for f in findings:
+            date_str = f" ({f.date})" if f.date else ""
+            cite_str = f" [{f.citations} citations]" if f.citations else ""
+            formatted.append(f"**{f.title}**{date_str}{cite_str}\n{f.snippet}\nSource: {f.url}")
+
+        if errors:
+            formatted.extend(errors)
+
+        return findings, "\n\n---\n\n".join(formatted)

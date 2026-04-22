@@ -1,20 +1,18 @@
 """Data models for research findings."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 
 
-@dataclass(slots=True)
+@dataclass
 class Finding:
     """Single research finding with metadata."""
-
     title: str
     snippet: str
     url: str
     date: str = ""
     source_type: str = ""
     citations: int = 0
-    is_error: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -24,132 +22,87 @@ class Finding:
             "date": self.date,
             "source_type": self.source_type,
             "citations": self.citations,
-            "is_error": self.is_error,
         }
+
+
+@dataclass
+class ToolResult:
+    """Single tool execution result."""
+
+    findings: list[Finding] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ResearchResults:
     """Aggregated results from all tools."""
-
     findings: list[Finding] = field(default_factory=list)
     tool_usage: dict[str, int] = field(default_factory=dict)
 
-    @property
-    def evidence(self) -> list[Finding]:
-        return [finding for finding in self.findings if not finding.is_error]
-
-    @property
-    def errors(self) -> list[Finding]:
-        return [finding for finding in self.findings if finding.is_error]
-
-    def add(self, finding: Finding) -> None:
+    def add(self, finding: Finding, tool_name: str):
         self.findings.append(finding)
-
-    def extend(self, findings: list[Finding]) -> None:
-        self.findings.extend(findings)
-
-    def record_tool_call(self, tool_name: str) -> None:
         self.tool_usage[tool_name] = self.tool_usage.get(tool_name, 0) + 1
 
-    def absorb(self, other: "ResearchResults") -> None:
-        self.findings.extend(other.findings)
-        for tool_name, count in other.tool_usage.items():
-            self.tool_usage[tool_name] = self.tool_usage.get(tool_name, 0) + count
-
     def confidence_score(self) -> tuple[str, str]:
-        """Calculate confidence from successful findings only."""
-        evidence = self.evidence
-        if not evidence:
-            return "LOW", "No successful findings"
+        """Calculate confidence based on source diversity and recency."""
+        if not self.findings:
+            return "LOW", "No findings"
 
-        source_types = {finding.source_type for finding in evidence}
+        source_types = {f.source_type for f in self.findings if f.source_type}
         diversity = min(len(source_types) / 5, 1.0)
 
-        current_year = datetime.now(timezone.utc).year
+        current_year = datetime.now().year
         recency_scores = []
-        for finding in evidence:
-            if not finding.date:
-                continue
-            try:
-                age = current_year - int(finding.date[:4])
-            except (TypeError, ValueError):
-                continue
-            recency_scores.append(max(0.0, 1 - (age * 0.2)))
-        recency = sum(recency_scores) / len(recency_scores) if recency_scores else 0.0
+        for f in self.findings:
+            if f.date:
+                try:
+                    year = int(f.date[:4])
+                    age = current_year - year
+                    recency_scores.append(max(0, 1 - (age * 0.2)))
+                except (ValueError, IndexError):
+                    pass
+        recency = sum(recency_scores) / len(recency_scores) if recency_scores else 0.5
 
-        cited = [finding for finding in evidence if finding.citations > 0]
-        citation_score = min(len(cited) / 3, 1.0)
+        cited = [f for f in self.findings if f.citations > 0]
+        citation_score = min(len(cited) / 3, 1.0) if cited else 0.0
+
         score = (diversity * 0.4) + (recency * 0.3) + (citation_score * 0.3)
 
-        if score >= 0.7 and len(source_types) >= 5 and citation_score > 0:
+        if score >= 0.7:
             level, dots = "HIGH", "●●●●●"
-        elif score >= 0.4 and len(source_types) >= 3:
+        elif score >= 0.4:
             level, dots = "MEDIUM", "●●●○○"
         else:
             level, dots = "LOW", "●○○○○"
 
-        return level, (
-            f"{dots} {level} — {len(source_types)} source types, "
-            f"{len(evidence)} findings, {len(cited)} cited item(s)"
-        )
+        return level, f"{dots} {level} — {len(source_types)} source types, {len(self.findings)} findings"
 
     def to_dict(self) -> dict:
         level, detail = self.confidence_score()
-        output = {
+        return {
             "confidence": {"level": level, "detail": detail},
-            "findings": [finding.to_dict() for finding in self.evidence],
+            "findings": [f.to_dict() for f in self.findings],
             "tool_usage": self.tool_usage,
         }
-        if self.errors:
-            output["errors"] = [finding.to_dict() for finding in self.errors]
-        return output
 
-    def _group_by_source(self, findings: list[Finding]) -> dict[str, list[Finding]]:
+    def _group_by_source(self) -> dict[str, list[Finding]]:
         by_source: dict[str, list[Finding]] = {}
-        for finding in findings:
-            by_source.setdefault(finding.source_type, []).append(finding)
+        for f in self.findings:
+            by_source.setdefault(f.source_type, []).append(f)
         return by_source
 
-    def to_text(self) -> str:
-        """Format successful findings for LLM consumption."""
-        evidence = self.evidence
-        if not evidence:
-            return "No successful findings."
-
-        parts = []
-        for source, items in sorted(self._group_by_source(evidence).items()):
-            parts.append(f"## [{source}]")
-            for finding in items:
-                date_str = f" ({finding.date})" if finding.date else ""
-                cite_str = f" [{finding.citations} citations]" if finding.citations else ""
-                parts.append(f"**{finding.title}**{date_str}{cite_str}")
-                parts.append(finding.snippet[:800])
-                parts.append(f"Source: {finding.url}\n")
-        return "\n".join(parts)
-
     def to_appendix(self) -> str:
-        """Format successful findings as appendix with a separate tool-error section."""
-        _, confidence = self.confidence_score()
-        parts = [f"## Appendix: Source Data\n\n**Research Confidence:** {confidence}\n"]
+        """Format raw findings as appendix."""
+        by_source = self._group_by_source()
+        _, confidence_str = self.confidence_score()
+        parts = [f"## Appendix: Source Data\n\n**Research Confidence:** {confidence_str}\n"]
 
-        evidence = self.evidence
-        if not evidence:
-            parts.append("No successful findings were collected.\n")
-        else:
-            for source, items in sorted(self._group_by_source(evidence).items()):
-                parts.append(f"### {source} ({len(items)} results)")
-                for index, finding in enumerate(items, 1):
-                    date_str = f"[{finding.date}] " if finding.date else ""
-                    cite_str = f" ({finding.citations} citations)" if finding.citations else ""
-                    parts.append(f"{index}. {date_str}**{finding.title}**{cite_str}")
-                    parts.append(f"   {finding.url}")
-                parts.append("")
-
-        if self.errors:
-            parts.append(f"### Tool errors ({len(self.errors)})")
-            for finding in self.errors:
-                parts.append(f"- [{finding.source_type or 'UNKNOWN'}] {finding.snippet}")
+        for source, items in sorted(by_source.items()):
+            parts.append(f"### {source} ({len(items)} results)")
+            for i, f in enumerate(items, 1):
+                date_str = f"[{f.date}] " if f.date else ""
+                cite_str = f" ({f.citations} citations)" if f.citations else ""
+                parts.append(f"{i}. {date_str}**{f.title}**{cite_str}")
+                parts.append(f"   {f.url}")
             parts.append("")
-
-        return "\n".join(parts).strip() + "\n"
+        return "\n".join(parts)

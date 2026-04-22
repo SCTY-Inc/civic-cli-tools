@@ -1,14 +1,19 @@
 # AGENTS.md
 
-Four-phase pipeline, 8 research tools, compare mode, JSON output.
+Four-phase pipeline, 8 research tools, compare mode, JSON output, and atomic signals for web-pulse.
 
 ```
-research (8 tools, parallel) → write → review → report.md
-         ↓                                     → stdout (JSON)
-   [compare mode]
-         ↓
-research A → research B → compare → report.md
+research (available tools, parallel) → write → review → report.md
+                           ↓                       → stdout (JSON)
+                     [compare mode]
+                           ↓
+              research A → research B → compare → report.md
+
+research (available tools, parallel) → signals envelope → stdout (JSON)
 ```
+
+Signals mode reuses the normal research phase and skips only the writer/reviewer steps.
+Inputs are either a preset name from `topics.toml` or an ad-hoc `--topic` plus the usual `--scope`, `--compare`, `--questions`, `--limit`, and `--verbose` flags.
 
 ## 1. Researcher
 
@@ -24,9 +29,11 @@ Tools by scope:
 
 Behavior:
 - MUST use ALL available tools (enforced via prompt)
+- Tools gated by optional API keys are omitted from Gemini's tool list when the key is missing
 - Parallel tool execution via ThreadPoolExecutor
+- Tool adapters return `ToolResult(findings, errors)`; only successful findings are added to `ResearchResults`
 - Returns `ResearchOutput` with findings + metadata
-- Tracks tool calls for --sources audit
+- Tracks tool usage for --sources audit
 - Max iterations configurable via `CIVIC_MAX_ITERATIONS` (default: 15)
 
 Output: `ResearchOutput(text, results, scope_label)`
@@ -67,19 +74,22 @@ class Finding:
     date: str         # YYYY-MM-DD or YYYY
     source_type: str  # WEB, ACADEMIC, CONGRESS, REGULATIONS, etc
     citations: int    # for academic papers
-    is_error: bool = False
 
     def to_dict() -> dict  # for JSON output
 
 @dataclass
+class ToolResult:
+    findings: list[Finding]
+    errors: list[str]
+
+@dataclass
 class ResearchResults:
     findings: list[Finding]
-    tool_usage: dict[str, int]  # per tool invocation, not per finding
+    tool_usage: dict[str, int]
 
     def confidence_score() -> (level, explanation)
-    def to_dict() -> dict   # for JSON output
-    def to_text() -> str    # successful findings for LLM
-    def to_appendix() -> str  # evidence + separate tool errors
+    def to_dict() -> dict      # for JSON output
+    def to_appendix() -> str   # for output
 ```
 
 ## Confidence Scoring
@@ -90,33 +100,32 @@ Score = (diversity × 0.4) + (recency × 0.3) + (citations × 0.3)
 ●●●●● HIGH   — 5+ source types, recent, cited
 ●●●○○ MEDIUM — 3-4 sources, some dated
 ●○○○○ LOW    — 1-2 sources, old data
-
-Errors are tracked separately and excluded from confidence/evidence totals.
 ```
 
 ## Tools
 
 Per-tool result cap defaults to `RESULTS_LIMIT = 25` (set in `src/tools/base.py`).
-Override at runtime with `--limit N` on `civic <topic>` or `civic run <preset>`;
-this calls `set_results_limit()` before research kicks off.
+Override at runtime with `--limit N` on `civic <topic>`, `civic run <preset>`, or
+`civic signals <preset>`; this calls `set_results_limit()` before research kicks off.
+Census is still capped to up to 5 rows by the adapter.
 
-| Tool | API | Key Required | Results |
-|------|-----|--------------|---------|
-| web_search | Exa | Yes | RESULTS_LIMIT |
-| academic_search | Semantic Scholar | No | RESULTS_LIMIT |
-| census_search | US Census | No (optional) | 5 |
-| congress_search | Congress.gov | Yes | RESULTS_LIMIT |
-| federal_register_search | Federal Register | No | RESULTS_LIMIT |
-| regulations_search | Regulations.gov | Yes | RESULTS_LIMIT |
-| court_search | CourtListener | No | RESULTS_LIMIT |
-| state_legislation_search | OpenStates | Yes | RESULTS_LIMIT |
+| Tool | API | Key | Results |
+|------|-----|-----|---------|
+| web_search | Exa | `EXA_API_KEY` required when scope includes web search | RESULTS_LIMIT |
+| academic_search | Semantic Scholar | None | RESULTS_LIMIT |
+| census_search | US Census | `CENSUS_API_KEY` optional (better limits) | up to 5 |
+| congress_search | Congress.gov | `CONGRESS_GOV_API_KEY` optional; enables source | RESULTS_LIMIT |
+| federal_register_search | Federal Register | None | RESULTS_LIMIT |
+| regulations_search | Regulations.gov | `REGULATIONS_GOV_API_KEY` optional; enables source | RESULTS_LIMIT |
+| court_search | CourtListener | None | RESULTS_LIMIT |
+| state_legislation_search | OpenStates + LegiScan fallback | `OPENSTATES_API_KEY` optional; `LEGISCAN_API_KEY` enables single-state fallback | RESULTS_LIMIT |
 
 ## Infrastructure
 
-- **Retry**: 3 attempts with exponential backoff on timeouts, connection errors, 429/5xx
+- **Retry**: tool HTTP fetches retry 3 times with exponential backoff on timeouts, connection errors, and 429/5xx; Gemini generation retries are controlled separately via `CIVIC_MAX_RETRIES` (default: 4, 429 only)
 - **Cache**: SQLite at `~/.cache/civic/cache.db`, 24h TTL, keyed on URL + params
 - **Parallel execution**: ThreadPoolExecutor, up to 8 concurrent tool calls per iteration
-- **Input validation**: Empty queries return error Findings, don't hit APIs
+- **Input validation**: Empty queries return `ToolResult(errors=[...])` and do not hit upstream APIs
 
 ## Prompts
 
@@ -131,13 +140,15 @@ this calls `set_results_limit()` before research kicks off.
 For programmatic use by other agents:
 
 ```bash
-uv run civic doctor                            # preflight: validate required API keys
-uv run civic "topic" -s federal -f json        # run pipeline, JSON to stdout
+uv run civic doctor                            # preflight: validate required + optional API keys
+uv run civic "topic" -s federal -f json        # run brief pipeline, JSON to stdout
 uv run civic "topic" -f json --limit 50        # widen per-tool results
 echo "topic" | uv run civic - -f json          # read topic from stdin
+uv run civic signals pulse-policy-weekly       # atomic per-finding JSON for web-pulse
 uv run civic get <url> -f json                 # fetch arbitrary URL as JSON envelope
 ```
 
-Returns structured JSON to stdout with findings, confidence, tool_usage, and tool errors when present.
+`civic -f json` returns structured JSON with findings, confidence, and tool usage.
+`civic signals ...` returns a stable signals envelope (`schema_version = 1`) for downstream ingestion.
 Exit code 0 on success, 1 on error, 130 on interrupt.
 Rich formatting auto-disables when stdout is not a TTY or when `NO_COLOR` is set.

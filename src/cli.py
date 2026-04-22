@@ -8,6 +8,7 @@ import sys
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+from typing import TypedDict
 
 import httpx
 import tomllib
@@ -15,17 +16,13 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from _agent_cli import DoctorCheck, doctor_runner
-from agents import (
-    combine_results,
-    compare_research,
-    research,
-    review,
-    scope_from_target,
-    write_brief,
-    write_comparison,
-)
-from output import save_report, format_json
+from agents import compare_research, research, review, write_brief, write_comparison
+from output import format_json, save_report
+from output_signals import emit_signals
+from scopes import Scope, compare_target_scope, parse_compare, parse_scope, scope_label
+from tools import ResearchResults, get_tool_names
 from tools.base import clear_cache, get_cache_stats, set_results_limit
+from tools.declarations import HARD_REQUIRED_TOOL_ENV_VARS
 
 __version__ = "0.6.0"
 
@@ -45,92 +42,114 @@ API_KEY_SIGNUP = {
     "CENSUS_API_KEY": "https://api.census.gov/data/key_signup.html",
 }
 
-STATES = {
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC", "PR"
-}
+TOPICS_FILENAME = "topics.toml"
 
-TOPICS_FILE = Path(__file__).parent.parent / "topics.toml"
-SPECIAL_COMPARE_TARGETS = {"federal", "news", "policy"}
-REQUIRED_ENV_BY_SCOPE = {
-    "federal": {"CONGRESS_GOV_API_KEY"},
-    "state": {"OPENSTATES_API_KEY"},
-    "all": {"CONGRESS_GOV_API_KEY", "OPENSTATES_API_KEY"},
-    "news": set(),
-    "policy": {"CONGRESS_GOV_API_KEY", "OPENSTATES_API_KEY"},
-}
+
+class TopicConfig(TypedDict, total=False):
+    topic: str
+    scope: str
+    compare: str
+    questions: list[str]
+    output: str
 
 
 # --- Topics ---
 
-def load_topics() -> dict:
+def find_topics_file() -> Path | None:
+    """Locate topics.toml from cwd, parent dirs, or an installed package."""
+    candidates: list[Path] = []
+    cwd = Path.cwd()
+    candidates.extend(parent / TOPICS_FILENAME for parent in (cwd, *cwd.parents))
+    candidates.append(Path(__file__).with_name(TOPICS_FILENAME))
+    candidates.append(Path(__file__).resolve().parent.parent / TOPICS_FILENAME)
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def load_topics() -> dict[str, TopicConfig]:
     """Load named topic presets from topics.toml."""
-    if not TOPICS_FILE.exists():
+    topics_file = find_topics_file()
+    if not topics_file:
         return {}
-    with open(TOPICS_FILE, "rb") as f:
+    with open(topics_file, "rb") as f:
         data = tomllib.load(f)
     return data.get("topics", {})
 
 
-def get_topic(name: str) -> dict | None:
+def get_topic(name: str) -> TopicConfig | None:
     """Get a single topic preset by name."""
     return load_topics().get(name)
 
 
 # --- Scope / compare parsing ---
 
-def parse_scope(scope_str: str) -> dict:
-    if scope_str == "federal":
-        return {"type": "federal", "states": []}
-    if scope_str == "all":
-        return {"type": "all", "states": []}
-    if scope_str.startswith("state:"):
-        states = [s.strip().upper() for s in scope_str[6:].split(",")]
-        invalid = [s for s in states if s not in STATES]
-        if invalid:
-            raise ValueError(f"Invalid state codes: {', '.join(invalid)}")
-        return {"type": "state", "states": states}
-    raise ValueError(f"Invalid scope: {scope_str}. Use 'federal', 'all', or 'state:CA,NY'")
+
+def _requested_tool_names(scope: Scope, compare: list[str] | None = None) -> list[str]:
+    scopes = [compare_target_scope(target) for target in compare] if compare else [scope]
+    names: list[str] = []
+    seen: set[str] = set()
+    for requested_scope in scopes:
+        for tool_name in get_tool_names(requested_scope):
+            if tool_name in seen:
+                continue
+            seen.add(tool_name)
+            names.append(tool_name)
+    return names
 
 
-def parse_compare(compare_str: str) -> list[str]:
-    targets = []
-    for raw_target in compare_str.split(","):
-        target = raw_target.strip()
-        if not target:
-            continue
-        lowered = target.lower()
-        if lowered in SPECIAL_COMPARE_TARGETS:
-            targets.append(lowered)
-            continue
-        state = target.upper()
-        if state not in STATES:
-            raise ValueError(f"Invalid compare target: {target}")
-        targets.append(state)
-    if len(targets) < 2:
-        raise ValueError("Compare mode requires at least two targets")
-    return targets
+def check_env(scope: Scope, compare: list[str] | None = None) -> list[str]:
+    required = ["GOOGLE_API_KEY"]
+    for tool_name in _requested_tool_names(scope, compare):
+        env_name = HARD_REQUIRED_TOOL_ENV_VARS.get(tool_name)
+        if env_name and env_name not in required:
+            required.append(env_name)
+    return [name for name in required if not os.getenv(name)]
 
 
-def required_env_vars(scope: dict, compare: list[str] | None = None) -> list[str]:
-    required = {"GOOGLE_API_KEY", "EXA_API_KEY"}
-    scopes = [scope] if not compare else [scope_from_target(target) for target in compare]
-    for current_scope in scopes:
-        required.update(REQUIRED_ENV_BY_SCOPE[current_scope["type"]])
-    return sorted(required)
+def _print_missing_env(missing: list[str]) -> None:
+    err_console.print(f"[red]Missing env vars:[/] {', '.join(missing)}")
+    urls = [API_KEY_SIGNUP[name] for name in missing if name in API_KEY_SIGNUP]
+    if urls:
+        err_console.print(f"Add to .env or export. Get keys: {' | '.join(urls)}")
 
 
-def check_env(scope: dict, compare: list[str] | None = None) -> list[str]:
-    return [name for name in required_env_vars(scope, compare) if not os.getenv(name)]
+def _load_topic_or_error(name: str, *, label: str) -> TopicConfig | None:
+    topic_config = get_topic(name)
+    if topic_config:
+        return topic_config
+
+    topics = load_topics()
+    err_console.print(f"[red]{label} '{name}' not found.[/]")
+    if topics:
+        err_console.print(f"Available: {', '.join(topics.keys())}")
+    else:
+        err_console.print(f"No topics.toml found. Create {Path.cwd() / TOPICS_FILENAME}")
+    return None
+
+
+def _print_sources(results: ResearchResults) -> None:
+    level, explanation = results.confidence_score()
+    color = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(level, "white")
+    console.print(f"\n[bold]Confidence:[/] [{color}]{explanation}[/]")
+    console.print("\n[bold]Sources:[/]")
+    for tool, count in sorted(results.tool_usage.items()):
+        console.print(f"  {tool}: {'[green]' + str(count) + 'x[/]' if count else '[dim]0[/]'}")
+    console.print()
 
 
 # --- Pipeline runner ---
 
-def _status(message: str, is_json: bool):
-    return nullcontext() if is_json else console.status(message)
+def _status(message: str, *, enabled: bool):
+    """Return a spinner context when interactive output is enabled."""
+    return console.status(message) if enabled else nullcontext()
 
 
 def run_pipeline(
@@ -165,8 +184,7 @@ def run_pipeline(
 
     missing = check_env(scope, compare_targets)
     if missing:
-        err_console.print(f"[red]Missing env vars:[/] {', '.join(missing)}")
-        err_console.print("Add to .env or export. Get free keys: api.congress.gov/sign-up | openstates.org/accounts/register/")
+        _print_missing_env(missing)
         return 1
 
     is_json = output_format == "json"
@@ -177,70 +195,59 @@ def run_pipeline(
                 console.print(f"[bold]Civic[/] comparing: {topic}")
                 console.print(f"[dim]{' vs '.join(compare_targets)}[/]\n")
 
-            with _status("[dim]Researching...", is_json):
+            with _status("[dim]Researching...", enabled=not is_json):
                 outputs = compare_research(topic, compare_targets, questions, verbose and not is_json)
 
             if is_json:
+                all_results = {}
+                for o in outputs:
+                    all_results[o.scope_label] = o.results.to_dict()
                 print(json.dumps({
                     "topic": topic,
                     "mode": "compare",
                     "targets": compare_targets,
-                    "results": {output.scope_label: output.results.to_dict() for output in outputs},
+                    "results": all_results,
                 }, indent=2))
                 return 0
 
             if show_sources:
-                for output in outputs:
-                    console.print(f"\n[bold]{output.scope_label}:[/]")
-                    for tool, count in sorted(output.results.tool_usage.items()):
+                for o in outputs:
+                    console.print(f"\n[bold]{o.scope_label}:[/]")
+                    for tool, count in sorted(o.results.tool_usage.items()):
                         console.print(f"  {tool}: {'[green]' + str(count) + 'x[/]' if count else '[dim]0[/]'}")
 
             console.print("[green]✓[/] Research")
-            with _status("[dim]Writing comparison...", is_json):
-                draft = write_comparison(topic, outputs)
-            console.print("[green]✓[/] Draft")
-
-            with _status("[dim]Reviewing...", is_json):
-                final = review(draft)
-            console.print("[green]✓[/] Review")
-
-            combined_results = combine_results(outputs)
-            if not no_appendix and combined_results.findings:
-                final += "\n\n---\n\n" + combined_results.to_appendix()
+            with _status("[dim]Writing comparison...", enabled=True):
+                final = write_comparison(topic, outputs)
+            console.print("[green]✓[/] Comparison")
 
         else:
+            label = scope_label(scope)
+
             if not is_json:
                 console.print(f"[bold]Civic[/] researching: {topic}")
-                console.print(f"[dim]Scope: {scope_str}[/]\n")
+                console.print(f"[dim]Scope: {label}[/]\n")
 
-            with _status("[dim]Researching...", is_json):
+            with _status("[dim]Researching...", enabled=not is_json):
                 research_output = research(topic, questions, scope=scope, verbose=verbose and not is_json)
 
             if is_json:
-                print(format_json(topic, research_output.scope_label, research_output.results.to_dict()))
+                results_dict = research_output.results.to_dict()
+                print(format_json(topic, label, results_dict))
                 return 0
 
             console.print("[green]✓[/] Research")
 
             if show_sources:
-                level, explanation = research_output.results.confidence_score()
-                color = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(level, "white")
-                console.print(f"\n[bold]Confidence:[/] [{color}]{explanation}[/]")
-                console.print("\n[bold]Sources:[/]")
-                for tool, count in sorted(research_output.results.tool_usage.items()):
-                    console.print(f"  {tool}: {'[green]' + str(count) + 'x[/]' if count else '[dim]0[/]'}")
-                console.print()
+                _print_sources(research_output.results)
 
-            with _status("[dim]Writing...", is_json):
-                draft = write_brief(topic, research_output)
+            with _status("[dim]Writing...", enabled=True):
+                draft = write_brief(topic, research_output, include_appendix=not no_appendix)
             console.print("[green]✓[/] Draft")
 
-            with _status("[dim]Reviewing...", is_json):
+            with _status("[dim]Reviewing...", enabled=True):
                 final = review(draft)
             console.print("[green]✓[/] Review")
-
-            if not no_appendix and research_output.results.findings:
-                final += "\n\n---\n\n" + research_output.results.to_appendix()
 
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -260,21 +267,15 @@ def run_pipeline(
 
 # --- CLI ---
 
-def handle_interrupt(signum, frame):
+def handle_interrupt(_signum, _frame):
     err_console.print("\n[yellow]Interrupted[/]")
     sys.exit(130)
 
 
 def cmd_run(args) -> int:
     """Run a named topic preset from topics.toml."""
-    topic_config = get_topic(args.name)
+    topic_config = _load_topic_or_error(args.name, label="Topic")
     if not topic_config:
-        topics = load_topics()
-        err_console.print(f"[red]Topic '{args.name}' not found.[/]")
-        if topics:
-            err_console.print(f"Available: {', '.join(topics.keys())}")
-        else:
-            err_console.print(f"No topics.toml found at {TOPICS_FILE}")
         return 1
 
     if getattr(args, "format", None) != "json":
@@ -322,14 +323,14 @@ def cmd_topics(args) -> int:
     """List available topic presets."""
     topics = load_topics()
     if not topics:
-        console.print(f"[dim]No topics found. Create {TOPICS_FILE}[/]")
+        console.print(f"[dim]No topics found. Create {Path.cwd() / TOPICS_FILENAME}[/]")
         return 0
     console.print(f"[bold]Topics[/] ({len(topics)} presets)\n")
     for name, config in topics.items():
         scope = config.get("scope") or f"compare: {config.get('compare', 'all')}"
         console.print(f"  [bold]{name}[/]")
         console.print(f"    [dim]{config['topic']} — {scope}[/]")
-    console.print(f"\n[dim]Run with: civic run <name>[/]")
+    console.print("\n[dim]Run with: civic run <name>[/]")
     return 0
 
 
@@ -349,6 +350,73 @@ def cmd_research(args) -> int:
     )
 
 
+def cmd_signals(args) -> int:
+    """Emit atomic per-finding signals as JSON (for web-pulse and similar consumers).
+
+    Reuses the research tool-loop but skips the markdown synthesis phase.
+    Either provide a preset name (positional) or --topic for ad-hoc.
+    """
+    if args.preset:
+        topic_config = _load_topic_or_error(args.preset, label="Preset")
+        if not topic_config:
+            return 1
+        topic = topic_config["topic"]
+        scope_str = topic_config.get("scope", "all")
+        compare_str = topic_config.get("compare")
+        questions = topic_config.get("questions")
+        preset_name = args.preset
+    elif args.topic:
+        topic = args.topic
+        scope_str = args.scope
+        compare_str = args.compare
+        questions = args.questions
+        preset_name = None
+    else:
+        err_console.print("[red]Provide either a preset (positional) or --topic[/]")
+        return 1
+
+    try:
+        scope = parse_scope(scope_str)
+        compare_targets = parse_compare(compare_str) if compare_str else None
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/] {e}")
+        return 1
+
+    missing = check_env(scope, compare_targets)
+    if missing:
+        _print_missing_env(missing)
+        return 1
+
+    if args.limit:
+        set_results_limit(args.limit)
+
+    try:
+        if compare_targets:
+            outputs = compare_research(topic, compare_targets, questions, verbose=args.verbose)
+            results = ResearchResults()
+            for output in outputs:
+                results.findings.extend(output.results.findings)
+                for tool, count in output.results.tool_usage.items():
+                    results.tool_usage[tool] = results.tool_usage.get(tool, 0) + count
+            label = f"compare:{compare_str}"
+        else:
+            research_output = research(topic, questions, scope=scope, verbose=args.verbose)
+            label = research_output.scope_label
+            results = research_output.results
+
+        print(emit_signals(topic, preset_name, label, results))
+        return 0
+
+    except KeyboardInterrupt:
+        err_console.print("\n[yellow]Interrupted[/]")
+        return 130
+    except Exception as e:
+        err_console.print(f"[red]Error:[/] {e}")
+        if args.verbose:
+            err_console.print_exception()
+        return 1
+
+
 def cmd_doctor(args) -> int:
     """Validate env vars. Required keys fail the run; optional keys warn only."""
     # Required vs optional split mirrors tools/implementations.py:
@@ -357,6 +425,7 @@ def cmd_doctor(args) -> int:
     optional_keys = [
         "CONGRESS_GOV_API_KEY",
         "OPENSTATES_API_KEY",
+        "LEGISCAN_API_KEY",
         "REGULATIONS_GOV_API_KEY",
         "CENSUS_API_KEY",
     ]
@@ -462,7 +531,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, handle_interrupt)
 
     # Detect ad-hoc topic: first non-flag arg is not a known subcommand
-    known_commands = {"run", "topics", "cache", "doctor", "get"}
+    known_commands = {"run", "topics", "cache", "doctor", "get", "signals"}
     first_pos = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
 
     if first_pos and first_pos not in known_commands:
@@ -501,6 +570,23 @@ Examples:
     cache_parser = subparsers.add_parser("cache", help="Manage response cache")
     cache_parser.add_argument("cache_action", choices=["stats", "clear"], help="stats | clear")
     cache_parser.set_defaults(func=cmd_cache)
+
+    # --- civic signals <preset> ---
+    signals_parser = subparsers.add_parser(
+        "signals",
+        help="Emit atomic per-finding JSON signals (for web-pulse and other consumers)",
+    )
+    signals_parser.add_argument("preset", nargs="?", help="Preset name from topics.toml")
+    signals_parser.add_argument("--topic", help="Ad-hoc topic (alternative to preset)")
+    signals_parser.add_argument("-s", "--scope", default="all",
+                                 help="federal | state:XX | all (used with --topic)")
+    signals_parser.add_argument("-c", "--compare", metavar="A,B",
+                                 help="Compare targets (used with --topic)")
+    signals_parser.add_argument("-q", "--questions", nargs="+", metavar="Q")
+    signals_parser.add_argument("--limit", type=int, default=None,
+                                 help="Per-tool results limit (default: 25)")
+    signals_parser.add_argument("-v", "--verbose", action="store_true")
+    signals_parser.set_defaults(func=cmd_signals)
 
     # --- civic doctor ---
     doctor_parser = subparsers.add_parser("doctor", help="Validate env vars + API keys")

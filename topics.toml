@@ -109,3 +109,15 @@ questions = [
     "What federal incentives exist for shifting to home-based care?"
 ]
 output = "outputs/medicaid-hcbs-spending.md"
+
+# --- web-pulse policy feed (consumed by apps/web-pulse/scripts/pulse_wiki_ingest_civic.py) ---
+
+[topics.pulse-policy-weekly]
+topic = "caregiving policy, home-based care, paid family leave, direct care workforce"
+scope = "all"
+questions = [
+    "What federal or state bills, rules, and filings this month materially affect family caregivers, paid leave, HCBS, or direct care workers?",
+    "What new CMS or HHS guidance affects caregiver reimbursement or home-based care?",
+    "Which state legislatures are advancing caregiver-relevant legislation right now?"
+]
+output = "outputs/pulse-policy-weekly.md"

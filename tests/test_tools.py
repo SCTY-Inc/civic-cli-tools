@@ -1,161 +1,271 @@
 """Tests for tool implementations with mocked HTTP."""
 
-import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from tools.implementations import (
-    AcademicSearch, CongressSearch, FederalRegisterSearch,
-    RegulationsSearch, CourtSearch, CensusSearch, StateLegislationSearch,
+    AcademicSearch,
+    CensusSearch,
+    CongressSearch,
+    CourtSearch,
+    FederalRegisterSearch,
+    RegulationsSearch,
+    StateLegislationSearch,
+    WebSearch,
 )
 from tools.registry import ToolRegistry
+from tools.models import ToolResult
 
 
 @pytest.fixture
 def mock_fetch():
     """Patch BaseTool._fetch_json to return controlled data."""
-    with patch("tools.implementations.BaseTool._fetch_json") as m:
-        yield m
+    with patch("tools.implementations.BaseTool._fetch_json") as mock:
+        yield mock
+
+
+class TestWebSearch:
+    def test_uses_current_search_api(self, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "test-key")
+        mock_client = MagicMock()
+        mock_client.search.return_value = MagicMock(
+            results=[
+                MagicMock(
+                    title="Policy Update",
+                    summary="Summary text",
+                    text="Full text",
+                    url="http://example.com",
+                    published_date="2025-01-15T00:00:00Z",
+                )
+            ]
+        )
+
+        tool = WebSearch()
+        tool._client = mock_client
+
+        result = tool.execute(query="caregiver policy")
+
+        assert len(result.findings) == 1
+        _, kwargs = mock_client.search.call_args
+        assert kwargs["num_results"] == 25
+        assert kwargs["contents"] == {"text": {"max_characters": 1500}}
+        assert result.findings[0].title == "Policy Update"
+
+    def test_missing_api_key(self, monkeypatch):
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        result = WebSearch().execute(query="caregiver policy")
+        assert result.findings == []
+        assert result.errors == ["EXA_API_KEY not set"]
+
+    def test_value_error_surfaces_as_provider_error(self, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "test-key")
+        mock_client = MagicMock()
+        mock_client.search.side_effect = ValueError("status code 429")
+        tool = WebSearch()
+        tool._client = mock_client
+        result = tool.execute(query="caregiver policy")
+        assert result.findings == []
+        assert result.errors == ["Exa API error: status code 429"]
 
 
 class TestAcademicSearch:
     def test_returns_findings(self, mock_fetch):
         mock_fetch.return_value = {
-            "data": [{
-                "title": "Paper Title",
-                "abstract": "Abstract text",
-                "year": 2025,
-                "citationCount": 42,
-                "url": "http://paper",
-                "authors": [{"name": "Author A"}, {"name": "Author B"}],
-            }]
+            "data": [
+                {
+                    "title": "Paper Title",
+                    "abstract": "Abstract text",
+                    "year": 2025,
+                    "citationCount": 42,
+                    "url": "http://paper",
+                    "authors": [{"name": "Author A"}, {"name": "Author B"}],
+                }
+            ]
         }
-        tool = AcademicSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert findings[0].title == "Paper Title"
-        assert findings[0].citations == 42
-        assert findings[0].source_type == "ACADEMIC"
+        result = AcademicSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].title == "Paper Title"
+        assert result.findings[0].citations == 42
+        assert result.findings[0].source_type == "ACADEMIC"
 
     def test_empty_query(self):
-        tool = AcademicSearch()
-        findings = tool.execute(query="")
-        assert len(findings) == 1
-        assert findings[0].title == "Error"
-
-    def test_null_abstract_does_not_crash(self, mock_fetch):
-        mock_fetch.return_value = {
-            "data": [{
-                "title": "Paper Title",
-                "abstract": None,
-                "year": 2025,
-                "citationCount": 42,
-                "url": "http://paper",
-                "authors": [{"name": "Author A"}],
-            }]
-        }
-        tool = AcademicSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert findings[0].is_error is False
+        result = AcademicSearch().execute(query="")
+        assert result.findings == []
+        assert result.errors == ["No query provided"]
 
     def test_api_error(self, mock_fetch):
         mock_fetch.side_effect = httpx.ConnectError("fail")
-        tool = AcademicSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert "error" in findings[0].snippet.lower()
+        result = AcademicSearch().execute(query="test")
+        assert result.findings == []
+        assert "api error" in result.errors[0].lower()
+
+    def test_handles_null_abstract(self, mock_fetch):
+        mock_fetch.return_value = {
+            "data": [
+                {
+                    "title": "Paper Title",
+                    "abstract": None,
+                    "year": 2025,
+                    "citationCount": 1,
+                    "url": "http://paper",
+                    "authors": [{"name": "Author A"}],
+                }
+            ]
+        }
+        result = AcademicSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].title == "Paper Title"
+        assert "Authors:" in result.findings[0].snippet
 
 
 class TestCongressSearch:
     def test_returns_findings(self, mock_fetch, monkeypatch):
         monkeypatch.setenv("CONGRESS_GOV_API_KEY", "test-key")
         mock_fetch.return_value = {
-            "bills": [{
-                "type": "HR", "number": "1234",
-                "title": "Test Act", "congress": 119,
-                "latestAction": {"text": "Referred to committee"},
-                "url": "http://bill", "introducedDate": "2025-01-15",
-            }]
+            "bills": [
+                {
+                    "type": "HR",
+                    "number": "1234",
+                    "title": "Test Act",
+                    "congress": 119,
+                    "latestAction": {"text": "Referred to committee"},
+                    "url": "http://bill",
+                    "introducedDate": "2025-01-15",
+                }
+            ]
         }
-        tool = CongressSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert "HR1234" in findings[0].title
-        assert findings[0].source_type == "CONGRESS"
+        result = CongressSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert "HR1234" in result.findings[0].title
+        assert result.findings[0].source_type == "CONGRESS"
 
     def test_missing_api_key(self, monkeypatch):
         monkeypatch.delenv("CONGRESS_GOV_API_KEY", raising=False)
-        tool = CongressSearch()
-        findings = tool.execute(query="test")
-        assert findings[0].title == "Error"
+        result = CongressSearch().execute(query="test")
+        assert result.findings == []
+        assert result.errors == ["CONGRESS_GOV_API_KEY not set"]
+
+    def test_handles_missing_latest_action_object(self, mock_fetch, monkeypatch):
+        monkeypatch.setenv("CONGRESS_GOV_API_KEY", "test-key")
+        mock_fetch.return_value = {
+            "bills": [
+                {
+                    "type": "HR",
+                    "number": "1234",
+                    "title": "Test Act",
+                    "congress": 119,
+                    "latestAction": None,
+                    "url": "http://bill",
+                    "introducedDate": "2025-01-15",
+                }
+            ]
+        }
+        result = CongressSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert "Status: N/A" in result.findings[0].snippet
 
 
 class TestFederalRegisterSearch:
     def test_returns_findings(self, mock_fetch):
         mock_fetch.return_value = {
-            "results": [{
-                "title": "Rule Title",
-                "type": "Rule",
-                "agencies": [{"name": "EPA"}],
-                "abstract": "Abstract",
-                "html_url": "http://rule",
-                "publication_date": "2025-03-01",
-            }]
+            "results": [
+                {
+                    "title": "Rule Title",
+                    "type": "Rule",
+                    "agencies": [{"name": "EPA"}],
+                    "abstract": "Abstract",
+                    "html_url": "http://rule",
+                    "publication_date": "2025-03-01",
+                }
+            ]
         }
-        tool = FederalRegisterSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert findings[0].source_type == "FED_REGISTER"
+        result = FederalRegisterSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].source_type == "FED_REGISTER"
+
+    def test_respects_results_limit_even_if_api_ignores_page_size(self, mock_fetch, monkeypatch):
+        monkeypatch.setattr("tools.implementations._base.RESULTS_LIMIT", 1)
+        mock_fetch.return_value = {
+            "results": [
+                {
+                    "title": "Rule A",
+                    "type": "Rule",
+                    "agencies": [{"name": "EPA"}],
+                    "abstract": "Abstract",
+                    "html_url": "http://rule-a",
+                    "publication_date": "2025-03-01",
+                },
+                {
+                    "title": "Rule B",
+                    "type": "Rule",
+                    "agencies": [{"name": "EPA"}],
+                    "abstract": "Abstract",
+                    "html_url": "http://rule-b",
+                    "publication_date": "2025-03-02",
+                },
+            ]
+        }
+        result = FederalRegisterSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].title == "Rule A"
 
 
 class TestRegulationsSearch:
     def test_returns_findings(self, mock_fetch, monkeypatch):
         monkeypatch.setenv("REGULATIONS_GOV_API_KEY", "test-key")
         mock_fetch.return_value = {
-            "data": [{
-                "id": "DOC-123",
-                "attributes": {
-                    "title": "Proposed Rule",
-                    "documentType": "Proposed Rule",
-                    "agencyId": "EPA",
-                    "summary": "Summary text",
-                    "postedDate": "2025-06-01T00:00:00Z",
-                },
-            }]
+            "data": [
+                {
+                    "id": "DOC-123",
+                    "attributes": {
+                        "title": "Proposed Rule",
+                        "documentType": "Proposed Rule",
+                        "agencyId": "EPA",
+                        "summary": "Summary text",
+                        "postedDate": "2025-06-01T00:00:00Z",
+                    },
+                }
+            ]
         }
-        tool = RegulationsSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert findings[0].source_type == "REGULATIONS"
-        assert "DOC-123" in findings[0].url
+        result = RegulationsSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].source_type == "REGULATIONS"
+        assert "DOC-123" in result.findings[0].url
+
+    def test_respects_minimum_page_size(self, mock_fetch, monkeypatch):
+        monkeypatch.setenv("REGULATIONS_GOV_API_KEY", "test-key")
+        monkeypatch.setattr("tools.implementations._base.RESULTS_LIMIT", 1)
+        mock_fetch.return_value = {"data": []}
+        RegulationsSearch().execute(query="test")
+        assert mock_fetch.call_args.kwargs["params"]["page[size]"] == 5
 
     def test_missing_api_key(self, monkeypatch):
         monkeypatch.delenv("REGULATIONS_GOV_API_KEY", raising=False)
-        tool = RegulationsSearch()
-        findings = tool.execute(query="test")
-        assert findings[0].title == "Error"
+        result = RegulationsSearch().execute(query="test")
+        assert result.findings == []
+        assert result.errors == ["REGULATIONS_GOV_API_KEY not set"]
 
 
 class TestCourtSearch:
     def test_returns_findings(self, mock_fetch):
         mock_fetch.return_value = {
-            "results": [{
-                "caseName": "Doe v. Smith",
-                "court": "Supreme Court",
-                "snippet": "The <mark>court</mark> held",
-                "absolute_url": "/opinion/123/",
-                "dateFiled": "2024-11-15",
-            }]
+            "results": [
+                {
+                    "caseName": "Doe v. Smith",
+                    "court": "Supreme Court",
+                    "snippet": "The <mark>court</mark> held",
+                    "absolute_url": "/opinion/123/",
+                    "dateFiled": "2024-11-15",
+                }
+            ]
         }
-        tool = CourtSearch()
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert findings[0].title == "Doe v. Smith"
-        assert "<mark>" not in findings[0].snippet
-        assert "**court**" in findings[0].snippet
+        result = CourtSearch().execute(query="test")
+        assert len(result.findings) == 1
+        assert result.findings[0].title == "Doe v. Smith"
+        assert "<mark>" not in result.findings[0].snippet
+        assert "**court**" in result.findings[0].snippet
 
 
 class TestCensusSearch:
@@ -165,96 +275,149 @@ class TestCensusSearch:
             ["California", "39538223", "78672", "4633830"],
             ["Texas", "29145505", "63826", "3938700"],
         ]
-        tool = CensusSearch()
-        findings = tool.execute(topic="demographics")
-        assert len(findings) == 2
-        assert findings[0].title == "California"
-        assert findings[0].source_type == "CENSUS"
+        result = CensusSearch().execute(topic="demographics")
+        assert len(result.findings) == 2
+        assert result.findings[0].title == "California"
+        assert result.findings[0].source_type == "CENSUS"
 
     def test_specific_variable_match(self, mock_fetch):
         mock_fetch.return_value = [
             ["NAME", "B23025_005E"],
             ["United States", "6100000"],
         ]
-        tool = CensusSearch()
-        findings = tool.execute(topic="unemployment rates")
-        assert len(findings) == 1
+        result = CensusSearch().execute(topic="unemployment rates")
+        assert len(result.findings) == 1
 
     def test_geography_state_fips(self):
-        tool = CensusSearch()
-        assert tool._parse_geography("state:CA,NY") == [{"for": "state:06"}, {"for": "state:36"}]
-
-    def test_geography_county_fips(self):
-        tool = CensusSearch()
-        assert tool._parse_geography("county:06037") == [{"for": "county:037", "in": "state:06"}]
+        assert CensusSearch()._parse_geography("state:CA") == {"for": "state:06"}
 
     def test_geography_us(self):
         tool = CensusSearch()
-        assert tool._parse_geography("us") == [{"for": "us:1"}]
-        assert tool._parse_geography("") == [{"for": "us:1"}]
+        assert tool._parse_geography("us") == {"for": "us:*"}
+        assert tool._parse_geography("") == {"for": "us:*"}
+
+    def test_invalid_api_key_is_reported_clearly(self, mock_fetch):
+        request = httpx.Request("GET", "https://api.census.gov/data/2022/acs/acs5")
+        response = httpx.Response(
+            302,
+            request=request,
+            headers={"location": "https://api.census.gov/data/invalid_key.html"},
+        )
+        mock_fetch.side_effect = httpx.HTTPStatusError("redirect", request=request, response=response)
+        result = CensusSearch().execute(topic="income")
+        assert result.findings == []
+        assert result.errors == ["CENSUS_API_KEY invalid"]
+
+
+class TestRegistry:
+    def test_returns_error_text_without_fake_findings(self):
+        registry = ToolRegistry({"type": "all", "states": []})
+        registry._tools["web_search"] = MagicMock(
+            execute=MagicMock(return_value=ToolResult(errors=["boom"]))
+        )
+
+        findings, formatted = registry.execute("web_search", {"query": "test"})
+
+        assert findings == []
+        assert formatted == "Tool error: boom"
+
+    def test_unexpected_tool_exception_is_not_hidden(self):
+        registry = ToolRegistry({"type": "all", "states": []})
+        registry._tools["web_search"] = MagicMock(execute=MagicMock(side_effect=RuntimeError("boom")))
+        with pytest.raises(RuntimeError, match="boom"):
+            registry.execute("web_search", {"query": "test"})
 
 
 class TestStateLegislationSearch:
     def test_returns_findings(self, mock_fetch, monkeypatch):
         monkeypatch.setenv("OPENSTATES_API_KEY", "test-key")
         mock_fetch.return_value = {
-            "results": [{
-                "identifier": "SB-123",
-                "title": "Test Bill",
-                "jurisdiction": {"name": "California"},
-                "session": "2025-2026",
-                "latest_action_description": "Passed assembly",
-                "latest_action_date": "2025-04-01",
-                "openstates_url": "http://bill",
-            }]
-        }
-        tool = StateLegislationSearch(default_states=["CA"])
-        findings = tool.execute(query="test")
-        assert len(findings) == 1
-        assert "SB-123" in findings[0].title
-        assert findings[0].source_type == "STATE_LEG"
-
-    def test_multi_state_scope_queries_each_state(self, monkeypatch):
-        monkeypatch.setenv("OPENSTATES_API_KEY", "test-key")
-        seen = []
-
-        def fake_fetch(*args, **kwargs):
-            jurisdiction = kwargs["params"].get("jurisdiction")
-            seen.append(jurisdiction)
-            return {
-                "results": [{
-                    "identifier": jurisdiction.upper(),
-                    "title": f"Bill {jurisdiction}",
-                    "jurisdiction": {"name": jurisdiction.upper()},
+            "results": [
+                {
+                    "identifier": "SB-123",
+                    "title": "Test Bill",
+                    "jurisdiction": {"name": "California"},
                     "session": "2025-2026",
-                    "latest_action_description": "Introduced",
+                    "latest_action_description": "Passed assembly",
                     "latest_action_date": "2025-04-01",
-                    "openstates_url": f"http://{jurisdiction}",
-                }]
-            }
+                    "openstates_url": "http://bill",
+                }
+            ]
+        }
+        result = StateLegislationSearch(default_states=["CA"]).execute(query="test")
+        assert len(result.findings) == 1
+        assert "SB-123" in result.findings[0].title
+        assert result.findings[0].source_type == "STATE_LEG"
 
-        tool = StateLegislationSearch(default_states=["CA", "NY"])
-        tool._fetch_json = fake_fetch
-        findings = tool.execute(query="test")
-        assert seen == ["ca", "ny"]
-        assert len(findings) == 2
+    def test_uses_legiscan_when_openstates_is_unavailable(self, mock_fetch, monkeypatch):
+        monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
+        monkeypatch.setenv("LEGISCAN_API_KEY", "test-key")
+        mock_fetch.return_value = {
+            "status": "OK",
+            "searchresult": {
+                "summary": {"count": 1},
+                "0": {
+                    "state": "CA",
+                    "bill_number": "AB2324",
+                    "title": "Vocational education: youth caregivers.",
+                    "last_action_date": "2026-04-21",
+                    "last_action": "Re-referred to Com. on APPR.",
+                    "url": "https://legiscan.com/CA/bill/AB2324/2025",
+                },
+            },
+        }
+        result = StateLegislationSearch(default_states=["CA"]).execute(query="caregiver")
+        assert len(result.findings) == 1
+        assert result.findings[0].title.startswith("AB2324:")
+        assert result.findings[0].source_type == "LEGISCAN"
+
+    def test_falls_back_to_legiscan_when_openstates_returns_no_results(self, mock_fetch, monkeypatch):
+        monkeypatch.setenv("OPENSTATES_API_KEY", "openstates-key")
+        monkeypatch.setenv("LEGISCAN_API_KEY", "legiscan-key")
+        mock_fetch.side_effect = [
+            {"results": []},
+            {
+                "status": "OK",
+                "searchresult": {
+                    "summary": {"count": 1},
+                    "0": {
+                        "state": "CA",
+                        "bill_number": "AB2324",
+                        "title": "Vocational education: youth caregivers.",
+                        "last_action_date": "2026-04-21",
+                        "last_action": "Re-referred to Com. on APPR.",
+                        "url": "https://legiscan.com/CA/bill/AB2324/2025",
+                    },
+                },
+            },
+        ]
+        result = StateLegislationSearch(default_states=["CA"]).execute(query="caregiver")
+        assert len(result.findings) == 1
+        assert result.findings[0].source_type == "LEGISCAN"
+        assert mock_fetch.call_count == 2
 
     def test_missing_api_key(self, monkeypatch):
         monkeypatch.delenv("OPENSTATES_API_KEY", raising=False)
-        tool = StateLegislationSearch()
-        findings = tool.execute(query="test")
-        assert findings[0].title == "Error"
+        monkeypatch.delenv("LEGISCAN_API_KEY", raising=False)
+        result = StateLegislationSearch().execute(query="test")
+        assert result.findings == []
+        assert result.errors == ["OPENSTATES_API_KEY or LEGISCAN_API_KEY not set"]
 
-
-class TestToolRegistry:
-    def test_defaults_census_geography_from_scope(self):
-        registry = ToolRegistry({"type": "state", "states": ["CA", "NY"]})
-        captured = {}
-
-        def fake_execute(**kwargs):
-            captured.update(kwargs)
-            return []
-
-        registry._tools["census_search"].execute = fake_execute
-        registry.execute("census_search", {"topic": "population"})
-        assert captured["geography"] == "state:CA,NY"
+    def test_handles_missing_jurisdiction_object(self, mock_fetch, monkeypatch):
+        monkeypatch.setenv("OPENSTATES_API_KEY", "test-key")
+        mock_fetch.return_value = {
+            "results": [
+                {
+                    "identifier": "SB-123",
+                    "title": "Test Bill",
+                    "jurisdiction": None,
+                    "session": "2025-2026",
+                    "latest_action_description": "Passed assembly",
+                    "latest_action_date": "2025-04-01",
+                    "openstates_url": "http://bill",
+                }
+            ]
+        }
+        result = StateLegislationSearch(default_states=["CA"]).execute(query="test")
+        assert len(result.findings) == 1
+        assert "State: N/A" in result.findings[0].snippet

@@ -23,6 +23,7 @@ uv.lock
 !agents.md
 report/
 output/
+outputs/
 
 # IDE
 .idea/

@@ -10,12 +10,12 @@ uv run civic "topic"             # all sources
 uv run civic "topic" -s federal  # federal only
 uv run civic "topic" -s state:CA # state only
 uv run civic "topic" -v          # verbose
-uv run civic "topic" --compare CA,NY
-uv run civic "topic" --sources   # confidence + tool-call audit
 uv run civic "topic" -f json     # JSON output (for agents)
 uv run civic "topic" --limit 10  # per-tool results cap (default 25)
 uv run civic -                   # read topic from stdin
-uv run civic run <preset>        # run named preset
+uv run civic run <preset>        # run named preset (markdown brief)
+uv run civic signals <preset>    # atomic per-finding JSON (for web-pulse, etc.)
+uv run civic signals --topic "X" # ad-hoc atomic signals
 uv run civic topics              # list presets
 uv run civic doctor              # validate required/optional API keys
 uv run civic get <url>           # fetch URL content (raw | JSON envelope)
@@ -25,20 +25,24 @@ uv run civic cache clear         # purge cached responses
 
 Honors `NO_COLOR` and auto-disables Rich formatting when stdout is not a TTY.
 
+`civic signals` accepts either a preset name from `topics.toml` or `--topic` for ad-hoc use. The ad-hoc path also accepts `--scope`, `--compare`, `--questions`, `--limit`, and `--verbose`. Signals mode skips write/review and emits the research findings as atomic JSON.
+
 ## Files
 
 ```
 src/
-├── cli.py           # entry, scope parsing, compare/env handling, --format json, doctor/get subcommands
-├── _agent_cli.py    # agent-friendly CLI helpers (DoctorCheck, doctor_runner)
-├── agents.py        # gemini, multi-tool loop, scoped compare execution
-├── prompts.py       # system prompts
-├── output.py        # markdown + JSON output (UTC timestamps)
+├── cli.py              # entry, scope parsing, --format json, run/signals/doctor/get subcommands
+├── _agent_cli.py       # minimal doctor helpers shared by the CLI
+├── agents.py           # gemini, multi-tool loop, parallel execution
+├── scopes.py           # shared scope parsing + labeling helpers
+├── prompts.py          # system prompts
+├── output.py           # markdown + JSON output (synthesis mode)
+├── output_signals.py   # per-finding atomic JSON (for web-pulse and similar consumers; schema v1)
 └── tools/
-    ├── base.py            # BaseTool, retry, caching, set_results_limit (default 25)
-    ├── models.py          # Finding, ResearchResults
+    ├── base.py            # BaseTool, ToolResult helpers, retry, caching, set_results_limit
+    ├── models.py          # Finding, ToolResult, ResearchResults
     ├── declarations.py    # Gemini function specs
-    ├── registry.py        # tool name → execution
+    ├── registry.py        # tool name → execution + ToolResult formatting
     └── implementations.py # 8 tool implementations
 ```
 
@@ -53,15 +57,16 @@ src/
 | federal_register_search | Federal Register | — |
 | regulations_search | Regulations.gov | REGULATIONS_GOV_API_KEY |
 | court_search | CourtListener | — |
-| state_legislation_search | OpenStates | OPENSTATES_API_KEY |
+| state_legislation_search | OpenStates + LegiScan fallback | OPENSTATES_API_KEY or LEGISCAN_API_KEY (single-state fallback) |
 
 ## Scope
 
 - `federal` → web, academic, census, congress, federal_register, regulations, court
 - `state:XX` → web, academic, census, state_legislation
 - `all` → all 8 tools
-- compare-only targets: `news` → web, `policy` → congress + federal_register + regulations + court + state_legislation
+
+Tools gated by optional API keys are omitted from Gemini's tool list when the key is missing; the rest of the run still proceeds. LegiScan is only exposed for single-state scopes and is used as a situational fallback for state legislation search.
 
 ## Model
 
-`gemini-2.5-flash` in `src/agents.py:MODEL` (configurable via `CIVIC_MODEL` env var)
+`gemini-3.1-flash-lite-preview` in `src/agents.py:MODEL` (configurable via `CIVIC_MODEL` env var)

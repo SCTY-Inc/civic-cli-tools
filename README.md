@@ -19,11 +19,12 @@ cp .env.example .env  # add API keys
 | Key | When Needed | Get It | Cost |
 |-----|-------------|--------|------|
 | GOOGLE_API_KEY | Always | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free |
-| EXA_API_KEY | Always | [dashboard.exa.ai](https://dashboard.exa.ai/api-keys) | Free tier |
-| CONGRESS_GOV_API_KEY | federal or policy research (`--scope federal`, `--compare federal,news`, `--compare policy,...`) | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
-| OPENSTATES_API_KEY | state or policy research (`--scope state:XX`, `--compare CA,NY`, `--compare policy,...`) | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
-| REGULATIONS_GOV_API_KEY | `--scope federal` | [api.data.gov/signup](https://api.data.gov/signup/) | Free |
-| CENSUS_API_KEY | Optional | [api.census.gov/data/key_signup](https://api.census.gov/data/key_signup.html) | Free |
+| EXA_API_KEY | When scope includes web search (`all`, `federal`, `state:XX`, `news`) | [dashboard.exa.ai/api-keys](https://dashboard.exa.ai/api-keys) | Free tier |
+| CONGRESS_GOV_API_KEY | Optional — unlocks Congress.gov source | [api.congress.gov/sign-up](https://api.congress.gov/sign-up) | Free |
+| OPENSTATES_API_KEY | Optional — unlocks OpenStates source | [openstates.org/accounts/register](https://openstates.org/accounts/register/) | Free |
+| LEGISCAN_API_KEY | Optional — situational fallback for single-state legislation searches | LegiScan account | Free public tier |
+| REGULATIONS_GOV_API_KEY | Optional — unlocks Regulations.gov source | [open.gsa.gov/api/regulationsgov/](https://open.gsa.gov/api/regulationsgov/) | Free |
+| CENSUS_API_KEY | Optional — improves Census rate limits | [api.census.gov/data/key_signup](https://api.census.gov/data/key_signup.html) | Free |
 
 No key needed: Semantic Scholar, Federal Register, CourtListener.
 
@@ -46,8 +47,8 @@ echo "Paid leave" | civic -                    # read topic from stdin
 civic doctor                                   # validate required + optional API keys
 ```
 
-Required: `GOOGLE_API_KEY`, `EXA_API_KEY` (fail the run if missing).
-Optional (advisory only): `CONGRESS_GOV_API_KEY`, `OPENSTATES_API_KEY`, `REGULATIONS_GOV_API_KEY`, `CENSUS_API_KEY` — each gates a specific source and prints a signup URL when missing.
+Required for the chosen run: `GOOGLE_API_KEY` always, plus `EXA_API_KEY` when the selected scope includes web search.
+Optional (advisory only): `CONGRESS_GOV_API_KEY`, `OPENSTATES_API_KEY`, `LEGISCAN_API_KEY`, `REGULATIONS_GOV_API_KEY`, `CENSUS_API_KEY` — each unlocks or improves a specific source without blocking the rest of the run.
 
 ### Fetch URL
 
@@ -55,6 +56,21 @@ Optional (advisory only): `CONGRESS_GOV_API_KEY`, `OPENSTATES_API_KEY`, `REGULAT
 civic get https://example.com/bill.pdf         # raw body to stdout
 civic get https://example.com -f json          # JSON envelope (status, headers, content)
 ```
+
+### Signals Output (for web-pulse and other consumers)
+
+```bash
+civic signals pulse-policy-weekly               # preset → atomic per-finding JSON
+civic signals --topic "HCBS policy" -s federal # ad-hoc topic → atomic signals
+```
+
+`civic signals` reuses the research loop but skips write/review and emits the atomic JSON envelope directly. It is used by GiveCare's `apps/web-pulse/scripts/pulse_wiki_ingest_civic.py`.
+
+Signal inputs:
+- positional `preset` from `topics.toml`, or `--topic` for ad-hoc use
+- with `--topic`: `-s/--scope`, `-c/--compare`, `-q/--questions`
+- optional: `--limit`, `-v`
+- Pulse currently shells `civic signals <preset> [--limit N]`
 
 ### JSON Output (for agents)
 
@@ -70,17 +86,12 @@ JSON schema:
   "scope": "...",
   "timestamp": "ISO8601",
   "confidence": { "level": "HIGH", "detail": "..." },
-  "findings": [{ "title", "snippet", "url", "date", "source_type", "citations", "is_error" }],
-  "tool_usage": { "congress_search": 1, ... },
-  "errors": [{ "title", "snippet", "source_type", "is_error" }]
+  "findings": [{ "title", "snippet", "url", "date", "source_type", "citations" }],
+  "tool_usage": { "congress_search": 10, ... }
 }
 ```
 
-`tool_usage` counts tool invocations, not individual findings.
-
 ### Compare Mode
-
-Special compare targets are `federal`, `news`, and `policy`.
 
 ```bash
 civic "Paid leave" --compare CA,NY             # state vs state
@@ -106,13 +117,21 @@ civic run ai-regulation-federal -f json        # preset with JSON output
 -o, --output FILE      default: outputs/report.md
 -q, --questions Q      research questions
 -v, --verbose          show tool calls
---sources              show confidence score + tool-call usage
+--sources              show confidence score + source usage
 --no-appendix          exclude source appendix from output
 --limit N              per-tool results cap (default: 25)
 -V, --version
 ```
 
 Pass `-` as the topic to read it from stdin. Rich output respects `NO_COLOR` and auto-disables when stdout is not a TTY.
+
+Subcommands:
+- `civic run <preset>`      run a named preset from `topics.toml`
+- `civic signals <preset>`  emit atomic per-finding JSON for web-pulse / agents
+- `civic topics`            list packaged or local presets
+- `civic doctor`            env/API-key preflight
+- `civic get <url>`         fetch raw body or JSON envelope
+- `civic cache stats|clear` inspect or clear the SQLite cache
 
 ### Cache Management
 
@@ -123,8 +142,9 @@ civic cache clear                              # purge all cached responses
 
 ## Output Features
 
-- **Confidence scoring**: HIGH/MEDIUM/LOW based on successful-source diversity, recency, and citations
-- **Source appendix**: Raw findings with dates and URLs for verification, plus a separate tool-error section
+- **Confidence scoring**: HIGH/MEDIUM/LOW based on source diversity, recency, citations
+- **Source appendix**: Raw findings with dates and URLs for verification
+- **Atomic signals JSON**: Stable per-finding envelope for web-pulse ingestion and other downstream consumers
 - **Comparison matrix**: Side-by-side analysis for --compare mode
 - **Response caching**: 24h SQLite cache at `~/.cache/civic/` — repeat queries are instant
 
@@ -139,40 +159,46 @@ civic cache clear                              # purge all cached responses
 | federal_register_search | Federal Register | rules, notices |
 | regulations_search | Regulations.gov | dockets, comments, rulemaking |
 | court_search | CourtListener | federal case law |
-| state_legislation_search | OpenStates | 50 state bills |
+| state_legislation_search | OpenStates + LegiScan fallback | 50 state bills |
 
 ## Configuration
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
-| CIVIC_MODEL | gemini-2.5-flash | Gemini model for all phases |
+| CIVIC_MODEL | gemini-3.1-flash-lite-preview | Gemini model for all phases |
 | CIVIC_MAX_ITERATIONS | 15 | Max tool calls per research phase |
 
 ## Structure
 
 ```
 src/
-├── cli.py               # entry, scope/compare parsing, --format json, doctor/get
-├── _agent_cli.py        # agent-friendly CLI helpers (DoctorCheck, doctor_runner)
-├── agents.py            # gemini orchestration, scoped compare execution
+├── cli.py               # entry, scope/compare parsing, run/signals/doctor/get
+├── _agent_cli.py        # minimal doctor helpers shared by the CLI
+├── agents.py            # gemini orchestration, parallel tool execution
+├── scopes.py            # shared scope parsing + labeling helpers
 ├── prompts.py           # RESEARCHER, WRITER, REVIEWER, COMPARATOR
-├── output.py            # markdown + JSON output
+├── output.py            # markdown + JSON output (brief mode)
+├── output_signals.py    # per-finding atomic JSON (schema v1 for web-pulse)
 └── tools/
-    ├── models.py        # Finding, ResearchResults
+    ├── models.py        # Finding, ToolResult, ResearchResults
     ├── declarations.py  # Gemini function specs
     ├── implementations.py  # 8 tool classes
-    ├── registry.py      # ToolRegistry + scope-aware defaults
-    └── base.py          # BaseTool, retry, caching, set_results_limit (default 25)
+    ├── registry.py      # ToolRegistry + ToolResult formatting
+    └── base.py          # BaseTool, ToolResult helpers, retry, caching, set_results_limit
 tests/
-├── test_cli.py          # scope parsing, env checks, appendix ordering
-├── test_models.py       # Finding, ResearchResults, confidence, error handling
-└── test_tools.py        # all 8 tools with mocked HTTP + scope defaults
+├── test_agents.py       # scope labeling helpers
+├── test_cli.py          # scope parsing, env checks, JSON-mode regressions
+├── test_models.py       # Finding, ResearchResults, confidence
+├── test_output_signals.py # atomic signal schema + extractor behavior
+├── test_scopes.py       # shared scope parsing + labels
+└── test_tools.py        # tools, provider errors, limits, registry filtering with mocked HTTP
 ```
 
 ## Changelog
 
 | Date | Change |
 |------|--------|
+| **2026-04-22** | **post-audit fixes** — Rich JSON-mode compatibility, Exa SDK update, signals docs for web-pulse, env-aware source gating, packaged presets, CI, LegiScan single-state fallback |
 | **2026-04-09** | **v0.6** — 8th source (Regulations.gov), `--format json`, parallel execution, retry/caching, 18 Census variables, 41 tests |
 | **2026-01-28** | **v0.5** — topics.toml presets, `run`/`topics` subcommands, gemini-2.0-flash |
 | **2026-01-25** | **v0.4** — Compare mode (`--compare CA,NY`), confidence scoring, source appendix, refactored tools/ package |
@@ -184,7 +210,7 @@ tests/
 - Dependencies: 50+ → 5
 - Install size: 918MB → ~50MB
 - Data sources: 1 (web) → 8 (gov + academic APIs)
-- Tests: 0 → 41
+- Tests: 0 → 70
 
 ## License
 

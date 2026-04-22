@@ -29,3 +29,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 sources = ["src"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"topics.toml" = "topics.toml"
+"LICENSE" = "LICENSE"
