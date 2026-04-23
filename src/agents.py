@@ -4,7 +4,6 @@ import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 
 from google import genai
 from google.genai import errors, types
@@ -12,7 +11,7 @@ from rich.console import Console
 
 from prompts import COMPARATOR, RESEARCHER, REVIEWER, WRITER
 from scopes import DEFAULT_SCOPE, Scope, compare_target_scope, scope_label
-from tools import ResearchResults, ToolRegistry, get_tool_declarations
+from tools import ResearchOutput, ResearchResults, ToolRegistry, get_tool_declarations
 
 console = Console()
 
@@ -43,14 +42,6 @@ def _generate_with_retry(client: genai.Client, **kwargs):
 
 # Singleton client
 _client: genai.Client | None = None
-
-
-@dataclass
-class ResearchOutput:
-    """Complete research output with metadata."""
-    text: str
-    results: ResearchResults
-    scope_label: str = ""
 
 
 def _get_client() -> genai.Client:

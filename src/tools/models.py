@@ -1,4 +1,4 @@
-"""Data models for research findings."""
+"""Data models for research findings and agent outputs."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -106,3 +106,11 @@ class ResearchResults:
                 parts.append(f"   {f.url}")
             parts.append("")
         return "\n".join(parts)
+
+
+@dataclass
+class ResearchOutput:
+    """Complete research output with metadata."""
+    text: str
+    results: ResearchResults
+    scope_label: str = ""
