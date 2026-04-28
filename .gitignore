@@ -29,6 +29,7 @@ outputs/
 .idea/
 .vscode/
 .claude/
+.pi/
 *.swp
 *.swo
 
